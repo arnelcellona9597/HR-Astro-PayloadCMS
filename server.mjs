@@ -33,7 +33,8 @@ const AUTH_PATHS = new Set([
   '/api/users/forgot-password',
 ])
 const WINDOW_MS = 15 * 60 * 1000
-const MAX_ATTEMPTS = 20
+// Attempts per address and path per window (default 20). Only the e2e test server raises it.
+const MAX_ATTEMPTS = Math.max(1, Number(process.env.HR_AUTH_RATE_LIMIT) || 20)
 const MAX_TRACKED = 10_000
 const attempts = new Map()
 

@@ -1,10 +1,15 @@
 ---
+import { AVATAR_MAX_BYTES, setOwnAvatar } from '@hr/cms/server/avatar'
 import { ROLE_LABELS } from '@hr/shared/enums'
 
+import Avatar from '../components/Avatar.astro'
+import Icon from '../components/Icon.astro'
 import App from '../layouts/App.astro'
 import { logout, revokeToken } from '../lib/auth'
 import { errorMessage, UserError } from '../lib/errors'
 import { setFlash } from '../lib/flash'
+import { relId } from '../lib/format'
+import { readImage } from '../lib/upload'
 
 const { payload, user } = Astro.locals
 let error = ''
@@ -12,6 +17,16 @@ if (Astro.request.method === 'POST' && user) {
   const fd = await Astro.request.formData()
   const action = String(fd.get('action'))
   try {
+    if (action === 'avatar') {
+      await setOwnAvatar(payload, user as never, await readImage(fd.get('avatar') as File | null, AVATAR_MAX_BYTES))
+      setFlash(Astro.cookies, { type: 'success', message: 'Profile picture updated.' })
+      return Astro.redirect('/profile')
+    }
+    if (action === 'avatar-remove') {
+      await setOwnAvatar(payload, user as never, null)
+      setFlash(Astro.cookies, { type: 'success', message: 'Profile picture removed.' })
+      return Astro.redirect('/profile')
+    }
     if (action === 'name') {
       await payload.update({ collection: 'users', id: user.id, data: { name: String(fd.get('name') ?? '').trim() }, user, overrideAccess: false })
       setFlash(Astro.cookies, { type: 'success', message: 'Name updated.' })
@@ -36,14 +51,56 @@ if (Astro.request.method === 'POST' && user) {
     Astro.response.status = 400
   }
 }
+const avatarId = relId(user?.avatar)
+const maxMb = AVATAR_MAX_BYTES / 1024 / 1024
 ---
-<App title="My account" heading="My account">
-  {error && <div class="mb-4 rounded-lg bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{error}</div>}
-  <div class="grid max-w-4xl gap-6 md:grid-cols-2">
+<App title="My account" heading="My account" description="Your picture, name and password. Your picture appears in the header and account menu.">
+  {
+    error && (
+      <div class="mb-4 flex items-start gap-3 rounded-xl border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">
+        <Icon name="alert" class="mt-0.5 size-4 shrink-0" />
+        <span>{error}</span>
+      </div>
+    )
+  }
+  <div class="grid max-w-5xl gap-6 lg:grid-cols-2">
+    <section class="card p-5 lg:col-span-2" aria-labelledby="picture-title">
+      <h2 id="picture-title" class="font-semibold">Profile picture</h2>
+      <div class="mt-4 flex flex-col gap-5 sm:flex-row sm:items-center">
+        <div class="relative shrink-0 self-start">
+          <span data-avatar-current>
+            <Avatar name={user?.name} imageId={avatarId} class="size-24 text-2xl ring-4 ring-surface-2" />
+          </span>
+          <img data-avatar-preview alt="" class="hidden size-24 rounded-full object-cover ring-4 ring-primary-soft" />
+        </div>
+        <div class="min-w-0 flex-1 space-y-3">
+          <form method="post" enctype="multipart/form-data" class="flex flex-wrap items-center gap-2" data-avatar-form>
+            <input type="hidden" name="action" value="avatar" />
+            <label class="btn-secondary cursor-pointer focus-within:ring-3 focus-within:ring-primary-soft">
+              <Icon name="upload" />
+              <span>{avatarId ? 'Choose a new picture' : 'Choose a picture'}</span>
+              <input type="file" name="avatar" accept="image/png,image/jpeg,image/webp,image/gif" class="sr-only" required data-avatar-input />
+            </label>
+            <button class="btn-primary" data-avatar-save disabled>Save picture</button>
+            <span class="text-sm text-muted" data-avatar-name aria-live="polite"></span>
+          </form>
+          <p class="field-help !mt-0">PNG, JPG, WEBP or GIF, up to {maxMb} MB. A square photo of your face works best; it is shown as a circle.</p>
+          {
+            avatarId && (
+              <form method="post" data-confirm="Remove your profile picture?">
+                <input type="hidden" name="action" value="avatar-remove" />
+                <button class="btn-danger btn-sm"><Icon name="trash" class="size-3.5" /> Remove picture</button>
+              </form>
+            )
+          }
+        </div>
+      </div>
+    </section>
+
     <form method="post" class="card space-y-4 p-5">
       <h2 class="font-semibold">Profile</h2>
       <input type="hidden" name="action" value="name" />
-      <div><label class="label" for="name">Full name</label><input class="input" id="name" name="name" required value={user?.name} /></div>
+      <div><label class="label" for="name">Full name</label><input class="input" id="name" name="name" required maxlength="120" value={user?.name} /></div>
       <div><span class="label">Email</span><p class="text-sm">{user?.email}</p></div>
       <div><span class="label">Role</span><p class="text-sm">{user ? ROLE_LABELS[user.role] : ''}</p></div>
       <button class="btn-primary">Save</button>
@@ -58,3 +115,30 @@ if (Astro.request.method === 'POST' && user) {
     </form>
   </div>
 </App>
+
+<script define:vars={{ maxBytes: AVATAR_MAX_BYTES }}>
+  // Show the chosen picture before saving, and catch files that are too large without a round trip.
+  const input = document.querySelector('[data-avatar-input]')
+  const preview = document.querySelector('[data-avatar-preview]')
+  const current = document.querySelector('[data-avatar-current]')
+  const save = document.querySelector('[data-avatar-save]')
+  const nameEl = document.querySelector('[data-avatar-name]')
+  let url = null
+  input?.addEventListener('change', () => {
+    const file = input.files && input.files[0]
+    if (url) URL.revokeObjectURL(url)
+    if (!file) return
+    if (file.size > maxBytes) {
+      nameEl.textContent = `That file is larger than ${maxBytes / 1024 / 1024} MB.`
+      save.disabled = true
+      input.value = ''
+      return
+    }
+    url = URL.createObjectURL(file)
+    preview.src = url
+    preview.classList.remove('hidden')
+    current.classList.add('hidden')
+    nameEl.textContent = file.name
+    save.disabled = false
+  })
+</script>

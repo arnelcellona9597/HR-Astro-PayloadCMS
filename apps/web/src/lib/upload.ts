@@ -3,6 +3,8 @@ import type { Payload } from 'payload'
 
 import type { User } from '@hr/cms/types'
 
+import { UserError } from './errors'
+
 export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
 export const ATTACHMENT_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp']
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024
@@ -50,4 +52,17 @@ export async function saveUpload(
     overrideAccess: false,
   })
   return doc.id
+}
+
+/**
+ * Reads an uploaded image for saving: checks size and the type found in its CONTENT, and returns the
+ * bytes with that detected type. Throws a UserError with a message for the person when it isn't valid.
+ */
+export async function readImage(file: File | null, maxBytes = MAX_IMAGE_BYTES, types = IMAGE_TYPES) {
+  if (!file || file.size === 0) throw new UserError('Choose a picture to upload.')
+  const problem = await checkUpload(file, types, maxBytes)
+  if (problem) throw new UserError(problem)
+  const data = Buffer.from(await file.arrayBuffer())
+  const detected = await fileTypeFromBuffer(new Uint8Array(data))
+  return { data, mimetype: detected!.mime, name: file.name, size: file.size }
 }

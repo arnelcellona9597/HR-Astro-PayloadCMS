@@ -9,12 +9,12 @@
  */
 :root {
   color-scheme: light;
-  --brand-primary: #1d4ed8;
-  --brand-secondary: #475569;
-  --brand-accent: #0d9488;
+  --brand-primary: #00539b;
+  --brand-secondary: #777777;
+  --brand-accent: #ffc72c;
   --brand-success: #15803d;
-  --brand-warning: #b45309;
-  --brand-danger: #b91c1c;
+  --brand-warning: #ffc72c;
+  --brand-danger: #c8102e;
   --brand-on-primary: #ffffff;
 
   --bg: #f5f6f8;
@@ -32,8 +32,9 @@
   --accent: var(--brand-accent);
   --success: var(--brand-success);
   --success-soft: color-mix(in oklab, var(--brand-success) 12%, var(--surface));
-  --warning: var(--brand-warning);
-  --warning-soft: color-mix(in oklab, var(--brand-warning) 14%, var(--surface));
+  /* Warning colours are often light (e.g. yellow): darken them when used as text so they stay readable. */
+  --warning: color-mix(in oklab, var(--brand-warning) 55%, black);
+  --warning-soft: color-mix(in oklab, var(--brand-warning) 18%, var(--surface));
   --danger: var(--brand-danger);
   --danger-soft: color-mix(in oklab, var(--brand-danger) 10%, var(--surface));
 

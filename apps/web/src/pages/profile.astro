@@ -37,11 +37,13 @@ if (Astro.request.method === 'POST' && user) {
       const next = String(fd.get('password') ?? '')
       if (next !== String(fd.get('confirm') ?? '')) throw new UserError('New passwords do not match.')
       // Confirm the current password before changing it (the session this creates is closed right away).
-      const check = await payload.login({ collection: 'users', data: { email: user.email, password: current } }).catch(() => {
+      // `trustedAuth` marks this as the app's own check: Payload refuses logins from anywhere else.
+      const check = await payload.login({ collection: 'users', data: { email: user.email, password: current }, context: { trustedAuth: true } } as never).catch(() => {
         throw new UserError('Your current password is incorrect.')
       })
       if (check.token) await revokeToken(payload, check.token)
-      await payload.update({ collection: 'users', id: user.id, data: { password: next } as never, user, overrideAccess: false })
+      // The current password was just verified, so this counts as a proven password change.
+      await payload.update({ collection: 'users', id: user.id, data: { password: next } as never, user, overrideAccess: false, context: { passwordChange: true } })
       // Sign out everywhere: the next sign-in uses the new password and a fresh email code.
       await logout(payload, user, Astro.cookies, true)
       return Astro.redirect('/login?notice=password')

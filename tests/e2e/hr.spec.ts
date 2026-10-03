@@ -429,3 +429,12 @@ test('My account: change password with the current one, then sign in with the ne
   await login(page, { email: STAFF.email, password: 'N3wStaffPassword!' })
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
 })
+
+test('annual requirements: searching works on every requirement type', async ({ page }) => {
+  await login(page, ADMIN)
+  for (const type of ['itr', 'sworn-declaration', 'pds', 'ipcr']) {
+    const res = await page.goto(`/requirements/${type}?year=2026&q=dan`)
+    expect(res?.status(), type).toBe(200)
+    await expect(page.locator('main input[name="q"]')).toHaveValue('dan')
+  }
+})

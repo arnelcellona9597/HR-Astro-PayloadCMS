@@ -56,7 +56,10 @@ if (Astro.request.method === 'POST') {
 
 const stats = await complianceStats(payload, slug, year)
 const and: Where[] = [{ year: { equals: year } }]
-if (q) and.push({ or: [{ lastName: { like: q } }, { firstName: { like: q } }, { jobTitle: { like: q } }, { station: { like: q } }, { remarks: { like: q } }] })
+// Search only the text fields this requirement actually has (e.g. ITR records have no station or job title).
+const fieldNames = new Set(payload.collections[slug].config.flattenedFields.map((f) => f.name))
+const searchable = ['lastName', 'firstName', 'middleName', 'station', 'jobTitle', 'tin', 'remarks'].filter((n) => fieldNames.has(n))
+if (q) and.push({ or: searchable.map((n) => ({ [n]: { like: q } })) })
 
 const records = view === 'records'
   ? await payload.find({ collection: slug, where: { and }, sort: ['lastName', 'firstName', 'id'], page, limit: 50, depth: 1, user, overrideAccess: false, populate: { employees: { employeeId: true } } })
@@ -130,7 +133,7 @@ const exportQuery = new URLSearchParams({ module: slug, year: String(year) })
   {view === 'records' && (
     <form method="get" class="mt-4 flex gap-2">
       <input type="hidden" name="year" value={year} />
-      <input class="input max-w-md" type="search" name="q" value={q} placeholder="Search name, job title, station, remarks" aria-label="Search" />
+      <input class="input max-w-md" type="search" name="q" value={q} placeholder={fieldNames.has('station') ? 'Search name, job title, station, remarks' : 'Search name or remarks'} aria-label="Search" />
       <button class="btn-secondary">Search</button>
     </form>
   )}

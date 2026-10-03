@@ -1,0 +1,50 @@
+---
+import { cancelChallenge, challengeInfo, resendChallenge, verifyChallenge } from '@hr/cms/server/twofactor'
+
+import CodeForm from '../../components/auth/CodeForm.astro'
+import Auth from '../../layouts/Auth.astro'
+import { clearChallengeCookie, getChallengeCookie, setAuthCookie } from '../../lib/auth'
+
+const { payload } = Astro.locals
+const pending = getChallengeCookie(Astro.cookies)
+if (!pending) return Astro.redirect('/login')
+
+let error = ''
+let info = ''
+if (Astro.request.method === 'POST') {
+  const fd = await Astro.request.formData()
+  const action = String(fd.get('action'))
+  if (action === 'cancel') {
+    await cancelChallenge(payload, pending.key)
+    clearChallengeCookie(Astro.cookies)
+    return Astro.redirect('/login')
+  }
+  if (action === 'resend') {
+    const r = await resendChallenge(payload, pending.key)
+    if (r.ok) info = 'A new code was sent.'
+    else error = r.error ?? 'Could not send a new code.'
+  } else {
+    const r = await verifyChallenge(payload, pending.key, String(fd.get('code') ?? ''))
+    if (r.ok && r.purpose === 'login') {
+      clearChallengeCookie(Astro.cookies)
+      setAuthCookie(Astro.cookies, r.token, r.exp)
+      return Astro.redirect(pending.next)
+    }
+    if (!r.ok && r.restart) {
+      clearChallengeCookie(Astro.cookies)
+      return Astro.redirect('/login?notice=restart')
+    }
+    error = r.ok ? 'Unexpected verification type.' : r.error
+    Astro.response.status = 400
+  }
+}
+
+const c = await challengeInfo(payload, pending.key)
+if (!c || c.purpose !== 'login') {
+  clearChallengeCookie(Astro.cookies)
+  return Astro.redirect('/login?notice=restart')
+}
+---
+<Auth title="Check your email" subtitle="Two-step verification">
+  <CodeForm maskedEmail={c.maskedEmail} resendAvailableAt={c.resendAvailableAt} sendsLeft={c.sendsLeft} error={error} info={info} cancelHref="/login" />
+</Auth>

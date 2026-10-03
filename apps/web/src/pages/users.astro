@@ -13,7 +13,26 @@ if (Astro.request.method === 'POST') {
   const id = Number(fd.get('id'))
   const action = String(fd.get('action'))
   try {
-    if (action === 'update') {
+    if (action === 'add') {
+      const role = String(fd.get('role'))
+      if (!(ROLES as readonly string[]).includes(role)) throw new Error('Choose a role.')
+      const doc = await payload.create({
+        collection: 'users',
+        data: {
+          name: String(fd.get('name') ?? '').trim(),
+          email: String(fd.get('email') ?? '').trim().toLowerCase(),
+          password: String(fd.get('password') ?? ''),
+          role: role as never,
+          status: 'approved',
+        } as never,
+        user,
+        overrideAccess: false,
+      })
+      setFlash(Astro.cookies, {
+        type: 'success',
+        message: `Account created for ${doc.name}. Share the temporary password securely; they confirm their email with a code at first sign-in and should change the password under My account.`,
+      })
+    } else if (action === 'update') {
       const role = String(fd.get('role'))
       const status = String(fd.get('status'))
       if (!(ROLES as readonly string[]).includes(role) || !(USER_STATUSES as readonly string[]).includes(status)) throw new Error('Invalid role or status')
@@ -42,11 +61,26 @@ if (Astro.request.method === 'POST') {
 }
 
 const users = await payload.find({ collection: 'users', sort: ['status', 'name'], limit: 500, depth: 0, user, overrideAccess: false, showHiddenFields: true })
-const pending = users.docs.filter((u) => u.status === 'pending')
+// Sign-ups appear for approval only after they confirmed their email with a code.
+const pending = users.docs.filter((u) => u.status === 'pending' && u.emailVerified)
 const others = users.docs.filter((u) => u.status !== 'pending')
 const locked = (u: { lockUntil?: string | null }) => Boolean(u.lockUntil && new Date(u.lockUntil) > new Date())
 ---
-<App title="HR Users" heading="HR users" description="Approve new sign-ups, set roles, and disable accounts that should no longer have access.">
+<App title="HR Accounts" heading="HR accounts" description="Add, approve, disable and remove the accounts of HR staff. Only System Admins can see this page.">
+  <details class="card mb-6 p-5" open={users.docs.length <= 1}>
+    <summary class="cursor-pointer font-semibold">Add an HR account</summary>
+    <form method="post" class="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-5 lg:items-end">
+      <input type="hidden" name="action" value="add" />
+      <div><label class="label" for="n-name">Full name</label><input class="input" id="n-name" name="name" required /></div>
+      <div><label class="label" for="n-email">Email</label><input class="input" id="n-email" name="email" type="email" required /></div>
+      <div>
+        <label class="label" for="n-role">Role</label>
+        <select class="input" id="n-role" name="role">{ROLES.map((r) => <option value={r} selected={r === 'hr-staff'}>{ROLE_LABELS[r]}</option>)}</select>
+      </div>
+      <div><label class="label" for="n-pw">Temporary password</label><input class="input" id="n-pw" name="password" type="text" minlength="10" required autocomplete="off" /></div>
+      <button class="btn-primary">Create account</button>
+    </form>
+  </details>
   {pending.length > 0 && (
     <section class="card mb-6 overflow-hidden border-warning">
       <header class="bg-warning-soft px-4 py-3"><h2 class="text-sm font-semibold text-warning">Waiting for approval ({pending.length})</h2></header>
@@ -76,7 +110,10 @@ const locked = (u: { lockUntil?: string | null }) => Boolean(u.lockUntil && new 
             const self = u.id === user?.id
             return (
               <tr>
-                <td class="font-medium">{u.name}{self && <span class="ml-2 badge-primary">You</span>}</td>
+                <td class="font-medium">
+                  {u.name}{self && <span class="ml-2 badge-primary">You</span>}
+                  {!u.emailVerified && <span class="ml-2 badge-warning" title="Confirms with an emailed code at first sign-in">Email not yet verified</span>}
+                </td>
                 <td class="text-fg-2">{u.email}</td>
                 <td>
                   <form method="post" class="flex flex-wrap items-center gap-2">
@@ -127,9 +164,8 @@ const locked = (u: { lockUntil?: string | null }) => Boolean(u.lockUntil && new 
       </table>
     </div>
   </div>
-  <div class="mt-4 grid gap-3 text-sm text-fg-2 md:grid-cols-3">
-    <p class="card p-4"><strong class="text-fg">Super Admin</strong> — everything, including users, branding and settings.</p>
-    <p class="card p-4"><strong class="text-fg">HR Admin</strong> — all HR records including deleting, Excel import, audit log and leave allowance.</p>
-    <p class="card p-4"><strong class="text-fg">HR Staff</strong> — view, add and edit HR records and export; cannot delete or import.</p>
+  <div class="mt-4 grid gap-3 text-sm text-fg-2 md:grid-cols-2">
+    <p class="card p-4"><strong class="text-fg">System Admin</strong> — everything HR Staff can do, plus adding, approving, disabling and deleting HR accounts.</p>
+    <p class="card p-4"><strong class="text-fg">HR Staff</strong> — every HR feature: records, deleting, imports, payroll, messages, settings and the audit log. Cannot manage HR accounts.</p>
   </div>
 </App>

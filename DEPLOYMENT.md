@@ -22,7 +22,7 @@ bash check-host.sh mail.yourdomain.com
 | glibc | ≥ 2.18 (server has 2.28 ✓) | — |
 | Filesystem | `ext4`/`xfs` | If it prints `nfs`, add `HR_SQLITE_WAL=false` to `.env` |
 | Memory | ~350–500 MB for the app | cPanel → *Resource Usage*; upgrade the plan if it keeps restarting |
-| SMTP 465/587 | open | Without it, password resets must be done by a Super Admin (HR Users page) |
+| SMTP 465/587 | open | **Needed for sign-in codes, notifications and payslips.** Without it, sign-in codes are written to `~/hr-app/stderr.log` and no emails go out |
 
 ## 2. Build a release (on your computer)
 
@@ -79,9 +79,22 @@ Click **Create**, then **Restart**. **Do not** click "Run NPM Install": the rele
 Enable HTTPS for the domain: cPanel → *SSL/TLS Status* → *Run AutoSSL*.
 
 The first start creates the database and runs the migrations automatically. Open the site and go to
-**`/register` right away**: the very first account becomes the **Super Admin**. Later sign-ups wait for approval.
+**`/register` right away**: the first account (after confirming its email with the emailed code) becomes the
+**System Admin**. Later sign-ups confirm their email, then wait for approval on **HR Accounts**.
 
-## 5. Nightly backups
+Then open **Email Settings** in the app: send a test email, set the **maximum emails per hour** to your host's
+limit (ask z.com; 100 is a safe default), and copy the cron line shown there (next section).
+
+## 5. Cron jobs
+
+cPanel → **Cron Jobs**:
+
+| When | Command | Why |
+|---|---|---|
+| Every 5 minutes (`*/5 * * * *`) | `curl -s "https://hr.yourdomain.com/internal/queue?key=<key from Email Settings>" > /dev/null` | Sends queued emails (payslips, announcements) even while the app is idle |
+| Daily at 02:00 | see below | Backups |
+
+### Nightly backups
 
 cPanel → **Cron Jobs** → once per day (e.g. 02:00):
 
@@ -99,7 +112,16 @@ runs) and `media-<date>.tar.gz`. It keeps 14 days (`BACKUP_KEEP` in `.env`).
 3. Unpack the matching media archive: `tar -xzf media-<date>.tar.gz -C ~/hr-data`.
 4. Start the app.
 
-## 6. Updating to a new version
+## 6. Email and sign-in codes
+
+- Every sign-in needs a 6-digit code emailed to the user; new accounts confirm their email the same way.
+- Sessions end **12 hours after sign-in**; users then sign in again (with a new code).
+- **If email stops working**, nobody is locked out: the code is written to the private server log.
+  A System Admin can read it in cPanel → File Manager → `hr-app/stderr.log` (look for `[2FA]`), and every
+  signed-in user sees a red "Email problem" banner until it's fixed. Fix SMTP in `.env`, then restart.
+- The Payload admin panel (`/admin`) uses the same sign-in: its own login page redirects to `/login`.
+
+## 7. Updating to a new version
 
 ```bash
 # on your computer
@@ -120,5 +142,6 @@ restore the backup you just made, and restart. Delete `~/hr-app-old` once you're
 - **Logs:** `~/hr-app/stderr.log` (Passenger) and the *Setup Node.js App* page.
 - **First page after a quiet period is slow (5–15 s):** Passenger stops idle apps to save memory, so the first request after idle starts it again. This is normal on shared plans.
 - **App keeps restarting / 503:** usually the memory limit. Check cPanel → *Resource Usage*. Lower `NODE_OPTIONS=--max-old-space-size` to 320, or upgrade the plan.
-- **"Too many attempts":** sign-in, registration and password reset are rate-limited per IP (20 tries per 15 min), and an account locks for 15 minutes after 5 wrong passwords. A Super Admin can unlock it on *HR Users*.
+- **"Too many attempts":** sign-in, registration and password reset are rate-limited per IP (20 tries per 15 min), and an account locks for 15 minutes after 5 wrong passwords. A System Admin can unlock it on *HR Accounts*.
+- **Emails are slow to arrive:** check *Messages* for queued/failed rows and *Email Settings* for the hourly limit and SMTP status. Make sure the queue cron job runs.
 - **Uploads fail above a few MB:** Apache/ModSecurity body limits. The app accepts up to 10 MB; ask support to raise `LimitRequestBody` if needed.

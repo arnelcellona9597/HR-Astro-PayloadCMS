@@ -1,0 +1,79 @@
+---
+import { discardPending, readPending, stagePendingImport } from '@hr/cms/server/imports'
+import { analyzePayrollWorkbook, commitPayrollImport, type PayrollImportPlan } from '@hr/cms/server/payroll-excel'
+import { writeAudit } from '@hr/cms/server/audit'
+
+import Icon from '../../../components/Icon.astro'
+import App from '../../../layouts/App.astro'
+import { setFlash } from '../../../lib/flash'
+
+const { payload, user } = Astro.locals
+const id = Number(Astro.params.id)
+if (Astro.request.method !== 'POST') return Astro.redirect(`/payroll/${id}`)
+const period = await payload.findByID({ collection: 'payroll-periods', id, depth: 0, user, overrideAccess: false, disableErrors: true })
+if (!period) return new Response(null, { status: 404 })
+
+const fd = await Astro.request.formData()
+let plan: PayrollImportPlan | null = null
+let token = ''
+let error = ''
+if (fd.get('action') === 'upload') {
+  const file = fd.get('file') as File | null
+  if (!file || !file.size || !/\.xlsx$/i.test(file.name)) error = 'Upload an .xlsx workbook.'
+  else if (file.size > 10 * 1024 * 1024) error = 'The file is larger than 10 MB.'
+  else {
+    const buffer = Buffer.from(await file.arrayBuffer())
+    token = await stagePendingImport(buffer, { userId: user!.id, fileName: file.name, moduleHint: `payroll:${id}` })
+    plan = await analyzePayrollWorkbook(payload, id, buffer)
+  }
+} else {
+  token = String(fd.get('token') ?? '')
+  const staged = readPending(token, user!.id)
+  if (!staged || staged.meta.moduleHint !== `payroll:${id}`) error = 'This upload expired. Upload the file again.'
+  else {
+    plan = await analyzePayrollWorkbook(payload, id, staged.buffer)
+    if (!plan.errors.length) {
+      const res = await commitPayrollImport(payload, { id: user!.id, name: user!.name, email: user!.email }, id, plan)
+      if (res.ok) {
+        discardPending(token)
+        await writeAudit(payload, user, { action: 'import', collectionSlug: 'payslips', docLabel: `${period.name}: ${staged.meta.fileName}`, changes: { created: res.created, updated: res.updated } })
+        setFlash(Astro.cookies, { type: 'success', message: `Imported ${staged.meta.fileName}: ${res.updated} payslip(s) updated, ${res.created} created.` })
+        return Astro.redirect(`/payroll/${id}`)
+      }
+      plan.errors.push(...res.errors)
+    }
+  }
+}
+const ok = plan && !plan.errors.length && plan.rows.length > 0
+---
+<App title="Payroll import" heading={`Import into ${period.name}`} back={{ href: `/payroll/${id}`, label: period.name }}>
+  {error && <div class="mb-4 rounded-lg bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{error}</div>}
+  {plan && (
+    <>
+      <div class:list={['mb-4 rounded-xl border px-5 py-4', ok ? 'border-line bg-success-soft' : 'border-danger bg-danger-soft']}>
+        {ok ? (
+          <p class="font-medium text-success">All rows passed the checks: {plan.rows.filter((r) => r.action === 'update').length} payslip(s) will be updated and {plan.rows.filter((r) => r.action === 'create').length} created.</p>
+        ) : (
+          <p class="font-medium text-danger">{plan.errors.length} problem(s) found. Nothing was saved — fix them in Excel and upload again.</p>
+        )}
+      </div>
+      {plan.warnings.map((w) => <p class="mb-2 text-sm text-warning">⚠ {w}</p>)}
+      {plan.errors.length > 0 && (
+        <div class="card mb-4 overflow-hidden">
+          <table class="table">
+            <thead><tr><th class="text-right">Row</th><th>Column</th><th>Problem</th></tr></thead>
+            <tbody>{plan.errors.slice(0, 200).map((e) => <tr><td class="text-right tabular">{e.row ?? ''}</td><td>{e.column ?? ''}</td><td>{e.message}</td></tr>)}</tbody>
+          </table>
+        </div>
+      )}
+      {ok && (
+        <form method="post" data-confirm="Save these payslip amounts?">
+          <input type="hidden" name="action" value="commit" />
+          <input type="hidden" name="token" value={token} />
+          <button class="btn-primary"><Icon name="check" /> Confirm import</button>
+          <a class="btn-secondary ml-2" href={`/payroll/${id}`}>Cancel</a>
+        </form>
+      )}
+    </>
+  )}
+</App>

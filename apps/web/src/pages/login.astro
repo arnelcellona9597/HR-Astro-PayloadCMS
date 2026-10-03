@@ -1,6 +1,8 @@
 ---
+import { startLogin } from '@hr/cms/server/twofactor'
+
 import Auth from '../layouts/Auth.astro'
-import { safeNext, setAuthCookie } from '../lib/auth'
+import { clientIp, safeNext, setChallengeCookie } from '../lib/auth'
 
 let error = ''
 let email = ''
@@ -15,12 +17,10 @@ if (Astro.request.method === 'POST') {
     error = 'Enter your email and password.'
   } else {
     try {
-      const res = await Astro.locals.payload.login({ collection: 'users', data: { email, password } })
-      if (res.token) {
-        setAuthCookie(Astro.cookies, res.token, res.exp)
-        return Astro.redirect(safeNext(String(fd.get('next') ?? '')))
-      }
-      error = 'Could not sign in.'
+      // Step 1: password. Step 2 (/login/verify): the code emailed to the user.
+      const res = await startLogin(Astro.locals.payload, email, password, clientIp(Astro.request))
+      setChallengeCookie(Astro.cookies, res.challenge, safeNext(String(fd.get('next') ?? '')))
+      return Astro.redirect('/login/verify')
     } catch (err) {
       const e = err as { message?: string; name?: string }
       if (e.name === 'LockedAuth') error = 'Too many failed attempts. This account is locked for 15 minutes.'
@@ -34,8 +34,24 @@ if (Astro.request.method === 'POST') {
 <Auth title="Sign in" subtitle="HR staff access only.">
   {notice === 'registered' && (
     <p class="mb-4 rounded-lg bg-success-soft px-3 py-2 text-sm text-success" role="status">
-      Registration received. A Super Admin must approve your account before you can sign in.
+      Registration received. A System Admin must approve your account before you can sign in.
     </p>
+  )}
+  {notice === 'expired' && (
+    <p class="mb-4 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning" role="status">
+      Your session ended (sessions last 12 hours). Please sign in again.
+    </p>
+  )}
+  {notice === 'restart' && (
+    <p class="mb-4 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning" role="status">
+      The verification code expired or was entered wrong too many times. Please sign in again.
+    </p>
+  )}
+  {notice === 'verified' && (
+    <p class="mb-4 rounded-lg bg-success-soft px-3 py-2 text-sm text-success" role="status">Email verified. You can now sign in.</p>
+  )}
+  {notice === 'password' && (
+    <p class="mb-4 rounded-lg bg-success-soft px-3 py-2 text-sm text-success" role="status">Password changed. Please sign in again.</p>
   )}
   {notice === 'reset' && (
     <p class="mb-4 rounded-lg bg-success-soft px-3 py-2 text-sm text-success" role="status">Password updated. Sign in with your new password.</p>

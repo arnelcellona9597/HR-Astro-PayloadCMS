@@ -202,3 +202,14 @@ export async function complianceStats(payload: Payload, slug: string, year: numb
   const missingIds = rows.filter((r) => num(r.complied) !== 1).map((r) => Number(r.id))
   return { active, complied, missing: active - complied, missingIds }
 }
+
+/** Payslip count and totals per payroll period. */
+export async function payrollTotals(payload: Payload): Promise<Map<number, { count: number; gross: number; net: number; corrected: number }>> {
+  const rows = await all<{ periodId: number; count: number; gross: number; net: number; corrected: number }>(
+    payload,
+    sql`SELECT period_id AS periodId, COUNT(*) AS count, ROUND(SUM(gross_pay), 2) AS gross, ROUND(SUM(net_pay), 2) AS net,
+          SUM(CASE WHEN corrected_after_release = 1 THEN 1 ELSE 0 END) AS corrected
+        FROM payslips GROUP BY period_id`,
+  )
+  return new Map(rows.map((r) => [Number(r.periodId), { count: num(r.count), gross: num(r.gross), net: num(r.net), corrected: num(r.corrected) }]))
+}

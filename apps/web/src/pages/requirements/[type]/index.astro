@@ -109,6 +109,14 @@ const exportQuery = new URLSearchParams({ module: slug, year: String(year) })
       <a href={tab('records')} class:list={['rounded-md px-3 py-1.5', view === 'records' ? 'bg-primary-soft font-medium text-primary-ink' : 'text-fg-2']}>Records</a>
       <a href={tab('missing')} class:list={['rounded-md px-3 py-1.5', view === 'missing' ? 'bg-primary-soft font-medium text-primary-ink' : 'text-fg-2']}>Not yet complied ({stats.missing})</a>
     </div>
+    {stats.missing > 0 && (
+      <a
+        class="btn-secondary"
+        href={`/messages/new?template=requirement-reminder&employees=${stats.missingIds.join(',')}&ctx_requirement=${encodeURIComponent(mod.title)}&ctx_year=${year}`}
+      >
+        <Icon name="mail" /> Email reminder to all {stats.missing} missing
+      </a>
+    )}
     <form method="post" class="flex items-center gap-2" data-confirm={`Add a blank ${year} row for every active employee who has none?`}>
       {isIpcr && (
         <select class="input w-auto" name="ratingPeriod" aria-label="Rating period" required>

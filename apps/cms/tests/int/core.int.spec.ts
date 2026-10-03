@@ -19,38 +19,37 @@ beforeAll(async () => {
   payload = await getPayload({ config: await config })
 })
 
+const register = (data: Record<string, unknown>) =>
+  payload.create({ collection: 'users', data: data as any, overrideAccess: false, context: { registration: true } })
+
 describe('users & registration', () => {
-  it('makes the first registered user an approved Super Admin', async () => {
-    const u = await payload.create({
-      collection: 'users',
-      data: { name: 'First Admin', email: 'admin@example.com', password: PASSWORD } as any,
-      overrideAccess: false,
-    })
+  it('makes the first registered user an approved System Admin', async () => {
+    const u = await register({ name: 'First Admin', email: 'admin@example.com', password: PASSWORD })
     superAdmin = await asUser('admin@example.com')
-    expect(superAdmin.role).toBe('super-admin')
+    expect(superAdmin.role).toBe('system-admin')
     expect(superAdmin.status).toBe('approved')
+    expect(superAdmin.emailVerified).toBe(false)
     expect(u.id).toBeDefined()
+    // (Normally done by entering the emailed code.)
+    await payload.update({ collection: 'users', id: u.id, data: { emailVerified: true }, overrideAccess: true })
   })
 
   it('creates later sign-ups as pending HR Staff, even if they ask for more', async () => {
-    await payload.create({
-      collection: 'users',
-      data: { name: 'Sneaky', email: 'staff@example.com', password: PASSWORD, role: 'super-admin', status: 'approved' } as any,
-      overrideAccess: false,
-    })
+    await register({ name: 'Sneaky', email: 'staff@example.com', password: PASSWORD, role: 'system-admin', status: 'approved', emailVerified: true })
     const u = await asUser('staff@example.com')
     expect(u.role).toBe('hr-staff')
     expect(u.status).toBe('pending')
+    expect(u.emailVerified).toBe(false)
+  })
+
+  it('refuses sign-ups that skip the email-verified registration flow', async () => {
+    await expect(
+      payload.create({ collection: 'users', data: { name: 'Rest', email: 'rest@example.com', password: PASSWORD } as any, overrideAccess: false }),
+    ).rejects.toThrow()
   })
 
   it('rejects weak passwords', async () => {
-    await expect(
-      payload.create({
-        collection: 'users',
-        data: { name: 'Weak', email: 'weak@example.com', password: 'short1' } as any,
-        overrideAccess: false,
-      }),
-    ).rejects.toThrow(/at least 10/)
+    await expect(register({ name: 'Weak', email: 'weak@example.com', password: 'short1' })).rejects.toThrow(/at least 10/)
   })
 
   it('blocks login until approved', async () => {
@@ -59,29 +58,44 @@ describe('users & registration', () => {
     ).rejects.toThrow(/approval/)
   })
 
-  it('lets a Super Admin approve, after which login works', async () => {
+  it('lets a System Admin approve, after which login works with a 12-hour token', async () => {
     const pending = await asUser('staff@example.com')
     await payload.update({ collection: 'users', id: pending.id, data: { status: 'approved' }, user: superAdmin, overrideAccess: false })
     const res = await payload.login({ collection: 'users', data: { email: 'staff@example.com', password: PASSWORD } })
     expect(res.token).toBeTruthy()
+    const claims = JSON.parse(Buffer.from(res.token!.split('.')[1]!, 'base64url').toString())
+    expect(claims.exp - claims.iat).toBe(12 * 60 * 60)
     staff = await asUser('staff@example.com')
   })
 
   it('does not let HR Staff promote themselves', async () => {
-    await payload.update({ collection: 'users', id: staff.id, data: { role: 'super-admin' } as any, user: staff, overrideAccess: false })
+    await payload.update({ collection: 'users', id: staff.id, data: { role: 'system-admin' } as any, user: staff, overrideAccess: false })
     const after = await asUser('staff@example.com')
     expect(after.role).toBe('hr-staff')
   })
 
-  it('does not let HR Staff read other users', async () => {
+  it('does not let HR Staff read or create HR accounts', async () => {
     const res = await payload.find({ collection: 'users', user: staff, overrideAccess: false })
     expect(res.docs.map((d) => d.email)).toEqual(['staff@example.com'])
+    await expect(
+      payload.create({ collection: 'users', data: { name: 'X', email: 'x@example.com', password: PASSWORD } as any, user: staff, overrideAccess: false }),
+    ).rejects.toThrow()
   })
 
-  it('keeps at least one Super Admin', async () => {
+  it('lets a System Admin add accounts directly', async () => {
+    const u = await payload.create({
+      collection: 'users',
+      data: { name: 'Added', email: 'added@example.com', password: PASSWORD, role: 'hr-staff', status: 'approved' } as any,
+      user: superAdmin,
+      overrideAccess: false,
+    })
+    expect(u.status).toBe('approved')
+  })
+
+  it('keeps at least one System Admin', async () => {
     await expect(
-      payload.update({ collection: 'users', id: superAdmin.id, data: { role: 'hr-admin' }, user: superAdmin, overrideAccess: false }),
-    ).rejects.toThrow(/Super Admin must remain/)
+      payload.update({ collection: 'users', id: superAdmin.id, data: { role: 'hr-staff' }, user: superAdmin, overrideAccess: false }),
+    ).rejects.toThrow(/System Admin must remain/)
   })
 })
 
@@ -149,9 +163,15 @@ describe('employees', () => {
     ).rejects.toThrow()
   })
 
-  it('only lets HR admins delete', async () => {
-    const emp = await payload.find({ collection: 'employees', where: { employeeId: { equals: 'EMP-0001' } }, overrideAccess: true })
-    await expect(payload.delete({ collection: 'employees', id: emp.docs[0]!.id, user: staff, overrideAccess: false })).rejects.toThrow()
+  it('lets HR Staff delete records', async () => {
+    const tmp = await payload.create({
+      collection: 'employees',
+      data: { employeeId: 'TMP-1', lastName: 'Tmp', firstName: 'Del', gender: 'Male', classification: 'COS', employmentStatus: 'Active' },
+      user: staff,
+      overrideAccess: false,
+    })
+    await payload.delete({ collection: 'employees', id: tmp.id, user: staff, overrideAccess: false })
+    expect((await payload.count({ collection: 'employees', where: { employeeId: { equals: 'TMP-1' } }, overrideAccess: true })).totalDocs).toBe(0)
   })
 
   it('writes an audit trail of changes', async () => {

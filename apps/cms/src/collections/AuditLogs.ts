@@ -1,6 +1,6 @@
 import type { CollectionConfig } from 'payload'
 
-import { isHrAdmin, nobody } from '../access'
+import { isStaff, nobody } from '../access'
 
 export const AuditLogs: CollectionConfig = {
   slug: 'audit-logs',
@@ -11,7 +11,7 @@ export const AuditLogs: CollectionConfig = {
     defaultColumns: ['createdAt', 'userName', 'action', 'collectionSlug', 'docLabel'],
   },
   // Written only by hooks (overrideAccess); nobody can edit or delete history.
-  access: { read: isHrAdmin, create: nobody, update: nobody, delete: nobody },
+  access: { read: isStaff, create: nobody, update: nobody, delete: nobody },
   fields: [
     { name: 'user', type: 'relationship', relationTo: 'users', index: true },
     { name: 'userName', type: 'text' },

@@ -1,0 +1,52 @@
+---
+import EmptyState from '../../components/EmptyState.astro'
+import Pagination from '../../components/Pagination.astro'
+import App from '../../layouts/App.astro'
+
+const { payload, user } = Astro.locals
+if (Astro.request.method === 'POST') {
+  const fd = await Astro.request.formData()
+  const id = Number(fd.get('id'))
+  const now = new Date().toISOString()
+  if (fd.get('action') === 'all') {
+    await payload.update({ collection: 'notifications', where: { and: [{ user: { equals: user!.id } }, { readAt: { exists: false } }] }, data: { readAt: now }, user, overrideAccess: false })
+    return Astro.redirect('/notifications')
+  }
+  const n = await payload.update({ collection: 'notifications', id, data: { readAt: now }, user, overrideAccess: false })
+  return Astro.redirect(n.link && n.link.startsWith('/') ? n.link : '/notifications')
+}
+const page = Math.max(1, Number(Astro.url.searchParams.get('page')) || 1)
+const list = await payload.find({ collection: 'notifications', sort: '-createdAt', page, limit: 30, depth: 0, user, overrideAccess: false })
+---
+<App title="Notifications" heading="Notifications">
+  <Fragment slot="actions">
+    <form method="post"><input type="hidden" name="action" value="all" /><button class="btn-secondary">Mark all as read</button></form>
+  </Fragment>
+  <div class="card overflow-hidden">
+    {
+      list.totalDocs === 0 ? (
+        <EmptyState title="No notifications" text="Account requests and other system events will show up here." />
+      ) : (
+        <>
+          <ul class="divide-y divide-[var(--border)]">
+            {list.docs.map((n) => (
+              <li class:list={['flex items-start gap-3 px-4 py-3', !n.readAt && 'bg-primary-soft']}>
+                <span class:list={['mt-1.5 size-2 shrink-0 rounded-full', n.readAt ? 'bg-transparent' : 'bg-primary']} aria-hidden="true" />
+                <div class="min-w-0 flex-1">
+                  <p class="font-medium">{n.title}</p>
+                  {n.body && <p class="text-sm text-fg-2">{n.body}</p>}
+                  <p class="mt-0.5 text-xs text-muted">{new Date(n.createdAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}</p>
+                </div>
+                <form method="post">
+                  <input type="hidden" name="id" value={n.id} />
+                  <button class="btn-secondary btn-sm">{n.link ? 'Open' : 'Mark read'}</button>
+                </form>
+              </li>
+            ))}
+          </ul>
+          <Pagination page={list.page ?? 1} totalPages={list.totalPages} totalDocs={list.totalDocs} limit={30} />
+        </>
+      )
+    }
+  </div>
+</App>

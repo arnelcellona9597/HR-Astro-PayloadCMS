@@ -17,7 +17,8 @@ if (Astro.request.method === 'POST') {
   return handleDelete(Astro, 'employees', id, `Employee ${emp.fullName}`, '/employees', `/employees/${id}`)
 }
 
-const isAdmin = user?.role === 'super-admin' || user?.role === 'hr-admin'
+// Every approved HR user (System Admin or HR Staff) may manage HR records.
+const canManage = Boolean(user)
 const year = Number(todayYmd().slice(0, 4))
 const byEmployee = { employee: { equals: id } }
 const [leaves, leaveSettings, itr, sworn, pds, ipcr, history] = await Promise.all([
@@ -27,7 +28,7 @@ const [leaves, leaveSettings, itr, sworn, pds, ipcr, history] = await Promise.al
   payload.find({ collection: 'sworn-declarations', where: byEmployee, sort: '-year', limit: 20, depth: 0, user, overrideAccess: false }),
   payload.find({ collection: 'pds-submissions', where: byEmployee, sort: '-year', limit: 20, depth: 0, user, overrideAccess: false }),
   payload.find({ collection: 'ipcr-ratings', where: byEmployee, sort: '-year', limit: 20, depth: 0, user, overrideAccess: false }),
-  isAdmin
+  canManage
     ? payload.find({
         collection: 'audit-logs',
         where: { and: [{ collectionSlug: { equals: 'employees' } }, { docId: { equals: String(id) } }] },
@@ -59,10 +60,11 @@ const has = (docs: { year: number; dateSubmitted?: string | null }[], y: number)
 ---
 <App title={emp.fullName ?? 'Employee'} heading={emp.fullName ?? 'Employee'} back={{ href: '/employees', label: 'Employees' }}>
   <Fragment slot="actions">
+    <a class="btn-secondary" href={`/messages/new?employees=${id}`}><Icon name="mail" /> Email employee</a>
     <a class="btn-secondary" href={`/leave/new?employee=${id}`}><Icon name="calendar" /> File leave</a>
     <a class="btn-primary" href={`/employees/${id}/edit`}><Icon name="edit" /> Edit</a>
     {
-      isAdmin && (
+      canManage && (
         <form method="post" data-confirm={`Delete ${emp.fullName}? This cannot be undone. Consider setting the status to Resigned/Retired/Terminated instead.`}>
           <button class="btn-danger"><Icon name="trash" /> Delete</button>
         </form>

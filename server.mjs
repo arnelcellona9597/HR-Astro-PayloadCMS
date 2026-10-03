@@ -22,7 +22,9 @@ const NEXT_PREFIXES = ['/admin', '/api', '/_next']
 // Basic brute-force protection for authentication endpoints (per client IP, in memory).
 const AUTH_PATHS = new Set([
   '/login',
+  '/login/verify',
   '/register',
+  '/register/verify',
   '/forgot-password',
   '/reset-password',
   '/api/users/login',
@@ -60,6 +62,22 @@ setInterval(() => {
 
 // ---------------------------------------------------------------------------------------------
 
+// Sign-in must go through the app's email-code (2FA) flow, and sessions must end 12 hours after
+// sign-in. These Payload endpoints would bypass that, so they are closed.
+const BLOCKED_API = [
+  '/api/users/login',
+  '/api/users/refresh-token',
+  '/api/users/first-register',
+  '/api/users/reset-password',
+  '/api/users/unlock',
+  '/api/users/verify',
+]
+const ADMIN_REDIRECTS = {
+  '/admin/login': '/login?next=/admin',
+  '/admin/create-first-user': '/register',
+  '/admin/forgot': '/forgot-password',
+}
+
 function isNextPath(pathname) {
   return NEXT_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`))
 }
@@ -84,6 +102,23 @@ async function main() {
     if (rateLimited(req, pathname)) {
       res.writeHead(429, { 'Content-Type': 'text/plain; charset=utf-8', 'Retry-After': '900' })
       res.end('Too many attempts. Please wait 15 minutes and try again.')
+      return
+    }
+
+    if (BLOCKED_API.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {
+      res.writeHead(403, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ errors: [{ message: 'Sign in at /login (email verification required).' }] }))
+      return
+    }
+    const redirect = ADMIN_REDIRECTS[pathname.replace(/\/$/, '')]
+    if (redirect) {
+      res.writeHead(302, { Location: redirect })
+      res.end()
+      return
+    }
+    if (pathname.startsWith('/admin/reset/')) {
+      res.writeHead(302, { Location: `/reset-password?token=${encodeURIComponent(pathname.slice('/admin/reset/'.length))}` })
+      res.end()
       return
     }
 

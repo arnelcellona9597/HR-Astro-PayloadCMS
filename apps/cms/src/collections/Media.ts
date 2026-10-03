@@ -1,6 +1,6 @@
 import type { CollectionConfig, Where } from 'payload'
 
-import { isApproved, isHrAdmin, isStaff } from '../access'
+import { isApproved, isStaff } from '../access'
 import { MEDIA_DIR } from '../env'
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -16,7 +16,7 @@ export const Media: CollectionConfig = {
     read: ({ req }) => (isApproved(req.user) ? true : ({ isPublic: { equals: true } } as Where)),
     create: isStaff,
     update: isStaff,
-    delete: isHrAdmin,
+    delete: isStaff,
   },
   upload: {
     staticDir: MEDIA_DIR,

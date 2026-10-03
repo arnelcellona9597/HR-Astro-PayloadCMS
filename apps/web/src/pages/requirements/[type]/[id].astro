@@ -29,13 +29,14 @@ const state = await handleSave(Astro, {
 })
 if (state.redirect) return state.redirect
 const employees = await employeeChoices(payload, true)
-const isAdmin = user?.role === 'super-admin' || user?.role === 'hr-admin'
+// Every approved HR user (System Admin or HR Staff) may manage HR records.
+const canManage = Boolean(user)
 const adjectival = (doc as { adjectivalRating?: string }).adjectivalRating
 ---
 <App title={mod.title} heading={`${mod.title}: ${doc.firstName} ${doc.lastName} (${doc.year})`} back={{ href: `/requirements/${route}?year=${doc.year}`, label: mod.title }}>
   <Fragment slot="actions">
     {adjectival && <span class="badge-primary">{adjectival}</span>}
-    {isAdmin && (
+    {canManage && (
       <form method="post" action={`/requirements/${route}/${id}?action=delete`} data-confirm="Delete this record?">
         <button class="btn-danger"><Icon name="trash" /> Delete</button>
       </form>

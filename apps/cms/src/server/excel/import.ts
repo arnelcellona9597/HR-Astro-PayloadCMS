@@ -377,7 +377,7 @@ async function applyOne(payload: Payload, req: PayloadRequest, plan: RowPlan, st
 }
 
 async function newRequest(payload: Payload, user: User): Promise<PayloadRequest> {
-  const req = await createLocalReq({ user: user as never, context: { skipAudit: true } }, payload)
+  const req = await createLocalReq({ user: user as never, context: { skipAudit: true, skipNotifications: true } }, payload)
   req.transactionID = (await payload.db.beginTransaction()) ?? undefined
   if (!req.transactionID) throw new Error('Database transactions are not enabled; refusing to import without them.')
   return req

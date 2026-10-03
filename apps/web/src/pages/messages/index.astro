@@ -1,0 +1,79 @@
+---
+import type { Where } from 'payload'
+
+import EmptyState from '../../components/EmptyState.astro'
+import Icon from '../../components/Icon.astro'
+import Pagination from '../../components/Pagination.astro'
+import App from '../../layouts/App.astro'
+import { MESSAGE_CATEGORIES } from '../../lib/compose'
+
+const { payload, user } = Astro.locals
+const p = Astro.url.searchParams
+const category = p.get('category') ?? ''
+const kind = p.get('kind') ?? ''
+const q = (p.get('q') ?? '').trim().slice(0, 100)
+const page = Math.max(1, Number(p.get('page')) || 1)
+const and: Where[] = []
+if (category) and.push({ category: { equals: category } })
+if (kind === 'manual') and.push({ automatic: { equals: false } })
+if (kind === 'automatic') and.push({ automatic: { equals: true } })
+if (q) and.push({ or: [{ subject: { like: q } }, { audience: { like: q } }, { sentByName: { like: q } }] })
+const list = await payload.find({ collection: 'messages', where: and.length ? { and } : {}, sort: '-createdAt', page, limit: 30, depth: 0, user, overrideAccess: false })
+const tone: Record<string, string> = { sent: 'badge-success', partial: 'badge-warning', failed: 'badge-danger', queued: 'badge-neutral', sending: 'badge-primary' }
+---
+<App title="Messages" heading="Messages" description="Emails sent from the system — announcements, reminders, leave and payroll notices — and their delivery status.">
+  <Fragment slot="actions">
+    <a class="btn-secondary" href="/settings/notifications"><Icon name="settings" /> Email settings & templates</a>
+    <a class="btn-primary" href="/messages/new"><Icon name="send" /> New message</a>
+  </Fragment>
+  <form method="get" class="card mb-4 flex flex-wrap items-end gap-3 p-4">
+    <div class="min-w-56 flex-1"><label class="label" for="q">Search</label><input class="input" id="q" name="q" type="search" value={q} placeholder="Subject, recipients or sender" /></div>
+    <div>
+      <label class="label" for="category">Category</label>
+      <select class="input" id="category" name="category">
+        <option value="">All</option>
+        {[...MESSAGE_CATEGORIES, 'System'].map((c) => <option selected={c === category}>{c}</option>)}
+      </select>
+    </div>
+    <div>
+      <label class="label" for="kind">Type</label>
+      <select class="input" id="kind" name="kind">
+        <option value="">All</option>
+        <option value="manual" selected={kind === 'manual'}>Written by HR</option>
+        <option value="automatic" selected={kind === 'automatic'}>Automatic</option>
+      </select>
+    </div>
+    <button class="btn-primary">Filter</button>
+  </form>
+  <div class="card overflow-hidden">
+    {
+      list.totalDocs === 0 ? (
+        <EmptyState title="No messages yet" text="Send an announcement, a reminder or a payroll notice.">
+          <a class="btn-primary" href="/messages/new">New message</a>
+        </EmptyState>
+      ) : (
+        <>
+          <div class="overflow-x-auto">
+            <table class="table">
+              <thead><tr><th>Sent</th><th>Subject</th><th>Category</th><th>To</th><th class="text-right">Delivered</th><th>Status</th><th>By</th></tr></thead>
+              <tbody>
+                {list.docs.map((m) => (
+                  <tr>
+                    <td class="whitespace-nowrap tabular text-fg-2">{new Date(m.createdAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' })}</td>
+                    <td class="font-medium"><a class="hover:text-primary-ink" href={`/messages/${m.id}`}>{m.subject}</a></td>
+                    <td><span class="badge-neutral">{m.category}</span>{m.automatic && <span class="ml-1 text-xs text-muted">auto</span>}</td>
+                    <td class="max-w-64 truncate text-fg-2" title={m.audience ?? ''}>{m.audience}</td>
+                    <td class="text-right tabular">{m.sent}/{(m.total ?? 0) - (m.skipped ?? 0)}{m.failed ? <span class="text-danger"> · {m.failed} failed</span> : null}</td>
+                    <td><span class={tone[m.status] ?? 'badge-neutral'}>{m.status}</span></td>
+                    <td class="text-fg-2">{m.sentByName}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Pagination page={list.page ?? 1} totalPages={list.totalPages} totalDocs={list.totalDocs} limit={30} />
+        </>
+      )
+    }
+  </div>
+</App>

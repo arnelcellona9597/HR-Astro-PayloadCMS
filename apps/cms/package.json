@@ -24,6 +24,7 @@
     "@payloadcms/email-nodemailer": "3.90.2",
     "@payloadcms/next": "3.90.2",
     "@payloadcms/ui": "3.90.2",
+    "@pdf-lib/fontkit": "^1.1.1",
     "cross-env": "^7.0.3",
     "dotenv": "16.4.7",
     "drizzle-orm": "0.45.2",
@@ -31,6 +32,7 @@
     "graphql": "^16.8.1",
     "next": "16.3.3",
     "payload": "3.90.2",
+    "pdf-lib": "^1.17.1",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "zod": "^4.1.0"

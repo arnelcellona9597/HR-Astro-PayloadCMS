@@ -2,19 +2,16 @@ import { defineMiddleware } from 'astro:middleware'
 
 import type { User } from '@hr/cms/types'
 
+import { decodeToken } from '@hr/cms/server/twofactor'
+
 import { clearAuthCookie, TOKEN_COOKIE } from './lib/auth'
 import { getHr } from './lib/payload'
 
-const PUBLIC_PATHS = new Set(['/login', '/register', '/forgot-password', '/reset-password'])
+const PUBLIC_PATHS = new Set(['/login', '/login/verify', '/register', '/register/verify', '/forgot-password', '/reset-password', '/internal/queue'])
 const PUBLIC_PREFIXES = ['/_astro/', '/files/', '/favicon']
 
-// Pages only HR admins / super admins may open.
-const ROLE_RULES: { prefix: string; roles: User['role'][] }[] = [
-  { prefix: '/users', roles: ['super-admin'] },
-  { prefix: '/settings', roles: ['super-admin'] },
-  { prefix: '/audit', roles: ['super-admin', 'hr-admin'] },
-  { prefix: '/data/import', roles: ['super-admin', 'hr-admin'] },
-]
+// HR Staff can use everything except managing HR accounts.
+const ROLE_RULES: { prefix: string; roles: User['role'][] }[] = [{ prefix: '/users', roles: ['system-admin'] }]
 
 /** Cross-site request forgery guard: state-changing requests must come from this site. */
 function sameOrigin(request: Request): boolean {
@@ -45,7 +42,10 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
       // directly instead of relying on browser-specific Sec-Fetch headers.
       const res = await payload.auth({ headers: new Headers({ Authorization: `JWT ${token}` }) })
       const u = res.user as (User & { collection?: string }) | null
-      if (u && u.collection === 'users' && u.status === 'approved') user = u
+      if (u && u.collection === 'users' && u.status === 'approved') {
+        user = u
+        ctx.locals.sessionExpiresAt = (decodeToken(token).exp ?? 0) * 1000
+      }
     } catch {
       user = null
     }
@@ -65,6 +65,19 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
     return ctx.redirect(`/login${nextUrl}`)
   }
   if (user && (pathname === '/login' || pathname === '/register')) return ctx.redirect('/')
+
+  if (user) {
+    const [unread, mail] = await Promise.all([
+      payload.count({ collection: 'notifications', where: { and: [{ user: { equals: user.id } }, { readAt: { exists: false } }] }, overrideAccess: true }),
+      payload.findGlobal({ slug: 'notification-settings', overrideAccess: true }),
+    ])
+    ctx.locals.unreadNotifications = unread.totalDocs
+    ctx.locals.mailWarning = mail.smtpLastError
+      ? `Email problem: ${mail.smtpLastError}`
+      : import.meta.env.PROD && !process.env.SMTP_HOST && process.env.HR_EMAIL_CAPTURE !== '1'
+        ? 'Email (SMTP) is not configured. Sign-in codes are being written to the server log and no notifications are sent.'
+        : null
+  }
 
   const rule = ROLE_RULES.find((r) => pathname === r.prefix || pathname.startsWith(`${r.prefix}/`))
   if (rule && user && !rule.roles.includes(user.role)) {

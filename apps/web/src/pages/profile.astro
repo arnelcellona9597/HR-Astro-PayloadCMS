@@ -2,7 +2,7 @@
 import { ROLE_LABELS } from '@hr/shared/enums'
 
 import App from '../layouts/App.astro'
-import { setAuthCookie } from '../lib/auth'
+import { logout, revokeToken } from '../lib/auth'
 import { toFormErrors } from '../lib/errors'
 import { setFlash } from '../lib/flash'
 
@@ -21,15 +21,15 @@ if (Astro.request.method === 'POST' && user) {
       const current = String(fd.get('current') ?? '')
       const next = String(fd.get('password') ?? '')
       if (next !== String(fd.get('confirm') ?? '')) throw new Error('New passwords do not match.')
-      // Confirm the current password before changing it.
-      await payload.login({ collection: 'users', data: { email: user.email, password: current } }).catch(() => {
+      // Confirm the current password before changing it (the session this creates is closed right away).
+      const check = await payload.login({ collection: 'users', data: { email: user.email, password: current } }).catch(() => {
         throw new Error('Your current password is incorrect.')
       })
+      if (check.token) await revokeToken(payload, check.token)
       await payload.update({ collection: 'users', id: user.id, data: { password: next } as never, user, overrideAccess: false })
-      const res = await payload.login({ collection: 'users', data: { email: user.email, password: next } })
-      if (res.token) setAuthCookie(Astro.cookies, res.token, res.exp)
-      setFlash(Astro.cookies, { type: 'success', message: 'Password changed.' })
-      return Astro.redirect('/profile')
+      // Sign out everywhere: the next sign-in uses the new password and a fresh email code.
+      await logout(payload, user, Astro.cookies, true)
+      return Astro.redirect('/login?notice=password')
     }
   } catch (err) {
     const fe = toFormErrors(err)

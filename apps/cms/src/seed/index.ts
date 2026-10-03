@@ -54,7 +54,7 @@ async function run() {
     payload.logger.info('Employees already exist — seed skipped.')
     process.exit(0)
   }
-  const opts = { overrideAccess: true, context: { skipAudit: true } } as const
+  const opts = { overrideAccess: true, context: { skipAudit: true, skipNotifications: true } } as const
   const today = todayYmd()
   const thisYear = Number(today.slice(0, 4))
 
@@ -210,6 +210,58 @@ async function run() {
       } as never,
       ...opts,
     })
+  }
+
+  // Payroll: last month released, this month in draft
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const [ty, tm] = today.split('-').map(Number) as [number, number]
+  const prev = tm === 1 ? { y: ty - 1, m: 12 } : { y: ty, m: tm - 1 }
+  const monthName = (y: number, m: number) => new Date(Date.UTC(y, m - 1, 1)).toLocaleString('en-US', { month: 'long', timeZone: 'UTC' })
+  const periods = [
+    { y: prev.y, m: prev.m, status: 'Released' as const },
+    { y: ty, m: tm, status: 'Draft' as const },
+  ]
+  for (const p of periods) {
+    const last = new Date(Date.UTC(p.y, p.m, 0)).getUTCDate()
+    const period = await payload.create({
+      collection: 'payroll-periods',
+      data: {
+        name: `${monthName(p.y, p.m)} ${p.y}`,
+        code: `${p.y}-${pad(p.m)}`,
+        periodStart: `${p.y}-${pad(p.m)}-01`,
+        periodEnd: `${p.y}-${pad(p.m)}-${last}`,
+        payDate: `${p.y}-${pad(p.m)}-${Math.min(last, 28)}`,
+        status: p.status,
+        releasedAt: p.status === 'Released' ? new Date().toISOString() : undefined,
+      },
+      ...opts,
+    })
+    for (const emp of active) {
+      const basic = emp.classification === 'Regular' ? int(22, 45) * 1000 : emp.classification === 'Contractual' ? int(16, 25) * 1000 : int(12, 18) * 1000
+      const filled = p.status === 'Released' || rand() < 0.6
+      await payload.create({
+        collection: 'payslips',
+        data: {
+          period: period.id,
+          employee: emp.id,
+          earnings: [
+            { label: 'Basic Pay', amount: filled ? basic : 0 },
+            { label: 'PERA', amount: filled && emp.classification === 'Regular' ? 2000 : 0 },
+            { label: 'Overtime', amount: filled && rand() < 0.2 ? int(5, 30) * 100 + 0.5 : 0 },
+            { label: 'Allowances', amount: filled && rand() < 0.4 ? 1500 : 0 },
+          ],
+          deductions: [
+            { label: 'Withholding Tax', amount: filled ? Math.round(basic * 0.08 * 100) / 100 : 0 },
+            { label: 'GSIS / SSS', amount: filled ? Math.round(basic * 0.045 * 100) / 100 : 0 },
+            { label: 'PhilHealth', amount: filled ? Math.round(basic * 0.025 * 100) / 100 : 0 },
+            { label: 'Pag-IBIG', amount: filled ? 200 : 0 },
+            { label: 'Loans', amount: filled && rand() < 0.15 ? int(5, 20) * 100 : 0 },
+          ],
+        },
+        ...opts,
+        context: { ...opts.context, releasing: true },
+      })
+    }
   }
 
   payload.logger.info(`Seeded ${branches.length} branches, ${employees.length} employees, onboarding, leave and requirements.`)

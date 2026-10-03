@@ -6,5 +6,8 @@ declare namespace App {
     user: import('@hr/cms/types').User | null
     settings: import('@hr/cms/types').SiteSetting
     theme: 'light' | 'dark' | 'system'
+    sessionExpiresAt?: number
+    unreadNotifications?: number
+    mailWarning?: string | null
   }
 }

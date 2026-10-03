@@ -1,0 +1,19 @@
+---
+import ModuleForm from '../../components/ModuleForm.astro'
+import App from '../../layouts/App.astro'
+import { handleSave } from '../../lib/crud'
+import { PERIOD_FIELDS } from '../../lib/payroll'
+
+const state = await handleSave(Astro, {
+  collection: 'payroll-periods',
+  fields: PERIOD_FIELDS,
+  successMessage: (d) => `Payroll period ${d.name} created. Next: generate the payslips.`,
+  redirectTo: (d) => `/payroll/${d.id}`,
+})
+if (state.redirect) return state.redirect
+---
+<App title="New payroll period" heading="New payroll period" back={{ href: '/payroll', label: 'Payroll' }}>
+  <div class="max-w-4xl">
+    <ModuleForm fields={PERIOD_FIELDS} values={state.values} errors={state.errors} formError={state.formError} cancelHref="/payroll" submitLabel="Create period" />
+  </div>
+</App>

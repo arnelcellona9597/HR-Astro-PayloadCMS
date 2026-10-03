@@ -22,6 +22,12 @@ function cleanup() {
   }
 }
 
+export function discardPending(token: string) {
+  if (!/^[a-f0-9]{32}$/.test(token)) return
+  fs.rmSync(path.join(DIR, `pending-${token}.xlsx`), { force: true })
+  fs.rmSync(path.join(DIR, `pending-${token}.json`), { force: true })
+}
+
 export async function stagePendingImport(buffer: Buffer, meta: Omit<Meta, 'createdAt'>): Promise<string> {
   fs.mkdirSync(DIR, { recursive: true })
   cleanup()
@@ -31,7 +37,8 @@ export async function stagePendingImport(buffer: Buffer, meta: Omit<Meta, 'creat
   return token
 }
 
-function readPending(token: string, userId: number): { buffer: Buffer; meta: Meta } | null {
+/** A staged upload, only for the user who uploaded it and within the hour. */
+export function readPending(token: string, userId: number): { buffer: Buffer; meta: Meta } | null {
   if (!/^[a-f0-9]{32}$/.test(token)) return null
   const file = path.join(DIR, `pending-${token}.xlsx`)
   const metaFile = path.join(DIR, `pending-${token}.json`)

@@ -75,11 +75,18 @@ export interface Config {
     'sworn-declarations': SwornDeclaration;
     'pds-submissions': PdsSubmission;
     'ipcr-ratings': IpcrRating;
+    'payroll-periods': PayrollPeriod;
+    payslips: Payslip;
+    messages: Message;
+    'message-recipients': MessageRecipient;
+    'email-templates': EmailTemplate;
+    notifications: Notification;
     holidays: Holiday;
     users: User;
     media: Media;
     'audit-logs': AuditLog;
     'import-jobs': ImportJob;
+    'login-challenges': LoginChallenge;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
@@ -95,11 +102,18 @@ export interface Config {
     'sworn-declarations': SwornDeclarationsSelect<false> | SwornDeclarationsSelect<true>;
     'pds-submissions': PdsSubmissionsSelect<false> | PdsSubmissionsSelect<true>;
     'ipcr-ratings': IpcrRatingsSelect<false> | IpcrRatingsSelect<true>;
+    'payroll-periods': PayrollPeriodsSelect<false> | PayrollPeriodsSelect<true>;
+    payslips: PayslipsSelect<false> | PayslipsSelect<true>;
+    messages: MessagesSelect<false> | MessagesSelect<true>;
+    'message-recipients': MessageRecipientsSelect<false> | MessageRecipientsSelect<true>;
+    'email-templates': EmailTemplatesSelect<false> | EmailTemplatesSelect<true>;
+    notifications: NotificationsSelect<false> | NotificationsSelect<true>;
     holidays: HolidaysSelect<false> | HolidaysSelect<true>;
     users: UsersSelect<false> | UsersSelect<true>;
     media: MediaSelect<false> | MediaSelect<true>;
     'audit-logs': AuditLogsSelect<false> | AuditLogsSelect<true>;
     'import-jobs': ImportJobsSelect<false> | ImportJobsSelect<true>;
+    'login-challenges': LoginChallengesSelect<false> | LoginChallengesSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
@@ -112,10 +126,14 @@ export interface Config {
   globals: {
     'site-settings': SiteSetting;
     'leave-settings': LeaveSetting;
+    'notification-settings': NotificationSetting;
+    'payslip-settings': PayslipSetting;
   };
   globalsSelect: {
     'site-settings': SiteSettingsSelect<false> | SiteSettingsSelect<true>;
     'leave-settings': LeaveSettingsSelect<false> | LeaveSettingsSelect<true>;
+    'notification-settings': NotificationSettingsSelect<false> | NotificationSettingsSelect<true>;
+    'payslip-settings': PayslipSettingsSelect<false> | PayslipSettingsSelect<true>;
   };
   locale: null;
   widgets: {
@@ -450,13 +468,28 @@ export interface IpcrRating {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
- * via the `definition` "holidays".
+ * via the `definition` "payroll-periods".
  */
-export interface Holiday {
+export interface PayrollPeriod {
   id: number;
-  date: string;
+  /**
+   * e.g. "October 2026 — 1st half"
+   */
   name: string;
-  type?: ('Regular Holiday' | 'Special Non-Working Day' | 'Local Holiday' | 'Office Closure') | null;
+  /**
+   * Short unique code, e.g. 2026-10-A
+   */
+  code: string;
+  periodStart: string;
+  periodEnd: string;
+  payDate: string;
+  /**
+   * Released periods have been emailed to employees.
+   */
+  status: 'Draft' | 'Released';
+  releasedAt?: string | null;
+  releasedBy?: (number | null) | User;
+  notes?: string | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -467,11 +500,15 @@ export interface Holiday {
 export interface User {
   id: number;
   name: string;
-  role: 'super-admin' | 'hr-admin' | 'hr-staff';
+  role: 'system-admin' | 'hr-staff';
   /**
    * Only approved accounts can sign in.
    */
   status: 'pending' | 'approved' | 'disabled';
+  /**
+   * Set when the user enters an emailed code.
+   */
+  emailVerified?: boolean | null;
   approvedAt?: string | null;
   updatedAt: string;
   createdAt: string;
@@ -492,6 +529,143 @@ export interface User {
     | null;
   password?: string | null;
   collection: 'users';
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payslips".
+ */
+export interface Payslip {
+  id: number;
+  period: number | PayrollPeriod;
+  employee: number | Employee;
+  fullName?: string | null;
+  employeeCode?: string | null;
+  position?: string | null;
+  station?: string | null;
+  classification?: string | null;
+  tin?: string | null;
+  sss?: string | null;
+  philhealth?: string | null;
+  pagibig?: string | null;
+  earnings?:
+    | {
+        label: string;
+        amount: number;
+        id?: string | null;
+      }[]
+    | null;
+  deductions?:
+    | {
+        label: string;
+        amount: number;
+        id?: string | null;
+      }[]
+    | null;
+  grossPay?: number | null;
+  totalDeductions?: number | null;
+  netPay?: number | null;
+  remarks?: string | null;
+  /**
+   * Changed after the payroll was released — consider re-sending it.
+   */
+  correctedAfterRelease?: boolean | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "messages".
+ */
+export interface Message {
+  id: number;
+  subject: string;
+  body: string;
+  category?: ('Leave' | 'Payroll' | 'Announcement' | 'Reminder' | 'General' | 'System') | null;
+  /**
+   * Who it was sent to, in words.
+   */
+  audience?: string | null;
+  attachments?: (number | Media)[] | null;
+  automatic?: boolean | null;
+  relatedCollection?: string | null;
+  relatedId?: string | null;
+  sentBy?: (number | null) | User;
+  sentByName?: string | null;
+  status: 'queued' | 'sending' | 'sent' | 'partial' | 'failed';
+  total?: number | null;
+  sent?: number | null;
+  failed?: number | null;
+  skipped?: number | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "message-recipients".
+ */
+export interface MessageRecipient {
+  id: number;
+  message: number | Message;
+  name?: string | null;
+  email?: string | null;
+  employee?: (number | null) | Employee;
+  user?: (number | null) | User;
+  subject?: string | null;
+  body?: string | null;
+  /**
+   * Attach this payslip as a PDF.
+   */
+  payslip?: (number | null) | Payslip;
+  status: 'queued' | 'sending' | 'sent' | 'failed' | 'skipped';
+  attempts?: number | null;
+  nextAttemptAt?: string | null;
+  error?: string | null;
+  sentAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "email-templates".
+ */
+export interface EmailTemplate {
+  id: number;
+  name: string;
+  /**
+   * Set for templates used by automatic emails (they cannot be deleted).
+   */
+  key?: string | null;
+  category: 'Leave' | 'Payroll' | 'Announcement' | 'Reminder' | 'General' | 'System';
+  subject: string;
+  body: string;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "notifications".
+ */
+export interface Notification {
+  id: number;
+  user: number | User;
+  title: string;
+  body?: string | null;
+  link?: string | null;
+  readAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "holidays".
+ */
+export interface Holiday {
+  id: number;
+  date: string;
+  name: string;
+  type?: ('Regular Holiday' | 'Special Non-Working Day' | 'Local Holiday' | 'Office Closure') | null;
+  updatedAt: string;
+  createdAt: string;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -536,6 +710,26 @@ export interface ImportJob {
    * Copy of the imported workbook in DATA_DIR/imports.
    */
   archiveFile?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "login-challenges".
+ */
+export interface LoginChallenge {
+  id: number;
+  key: string;
+  purpose: 'login' | 'register';
+  user: number | User;
+  codeHash: string;
+  tokenEnc?: string | null;
+  tokenExp?: number | null;
+  expiresAt: string;
+  attempts?: number | null;
+  sendCount?: number | null;
+  lastSentAt?: string | null;
+  ip?: string | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -596,6 +790,30 @@ export interface PayloadLockedDocument {
         value: number | IpcrRating;
       } | null)
     | ({
+        relationTo: 'payroll-periods';
+        value: number | PayrollPeriod;
+      } | null)
+    | ({
+        relationTo: 'payslips';
+        value: number | Payslip;
+      } | null)
+    | ({
+        relationTo: 'messages';
+        value: number | Message;
+      } | null)
+    | ({
+        relationTo: 'message-recipients';
+        value: number | MessageRecipient;
+      } | null)
+    | ({
+        relationTo: 'email-templates';
+        value: number | EmailTemplate;
+      } | null)
+    | ({
+        relationTo: 'notifications';
+        value: number | Notification;
+      } | null)
+    | ({
         relationTo: 'holidays';
         value: number | Holiday;
       } | null)
@@ -614,6 +832,10 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'import-jobs';
         value: number | ImportJob;
+      } | null)
+    | ({
+        relationTo: 'login-challenges';
+        value: number | LoginChallenge;
       } | null);
   globalSlug?: string | null;
   user: {
@@ -850,6 +1072,131 @@ export interface IpcrRatingsSelect<T extends boolean = true> {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payroll-periods_select".
+ */
+export interface PayrollPeriodsSelect<T extends boolean = true> {
+  name?: T;
+  code?: T;
+  periodStart?: T;
+  periodEnd?: T;
+  payDate?: T;
+  status?: T;
+  releasedAt?: T;
+  releasedBy?: T;
+  notes?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payslips_select".
+ */
+export interface PayslipsSelect<T extends boolean = true> {
+  period?: T;
+  employee?: T;
+  fullName?: T;
+  employeeCode?: T;
+  position?: T;
+  station?: T;
+  classification?: T;
+  tin?: T;
+  sss?: T;
+  philhealth?: T;
+  pagibig?: T;
+  earnings?:
+    | T
+    | {
+        label?: T;
+        amount?: T;
+        id?: T;
+      };
+  deductions?:
+    | T
+    | {
+        label?: T;
+        amount?: T;
+        id?: T;
+      };
+  grossPay?: T;
+  totalDeductions?: T;
+  netPay?: T;
+  remarks?: T;
+  correctedAfterRelease?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "messages_select".
+ */
+export interface MessagesSelect<T extends boolean = true> {
+  subject?: T;
+  body?: T;
+  category?: T;
+  audience?: T;
+  attachments?: T;
+  automatic?: T;
+  relatedCollection?: T;
+  relatedId?: T;
+  sentBy?: T;
+  sentByName?: T;
+  status?: T;
+  total?: T;
+  sent?: T;
+  failed?: T;
+  skipped?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "message-recipients_select".
+ */
+export interface MessageRecipientsSelect<T extends boolean = true> {
+  message?: T;
+  name?: T;
+  email?: T;
+  employee?: T;
+  user?: T;
+  subject?: T;
+  body?: T;
+  payslip?: T;
+  status?: T;
+  attempts?: T;
+  nextAttemptAt?: T;
+  error?: T;
+  sentAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "email-templates_select".
+ */
+export interface EmailTemplatesSelect<T extends boolean = true> {
+  name?: T;
+  key?: T;
+  category?: T;
+  subject?: T;
+  body?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "notifications_select".
+ */
+export interface NotificationsSelect<T extends boolean = true> {
+  user?: T;
+  title?: T;
+  body?: T;
+  link?: T;
+  readAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "holidays_select".
  */
 export interface HolidaysSelect<T extends boolean = true> {
@@ -867,6 +1214,7 @@ export interface UsersSelect<T extends boolean = true> {
   name?: T;
   role?: T;
   status?: T;
+  emailVerified?: T;
   approvedAt?: T;
   updatedAt?: T;
   createdAt?: T;
@@ -933,6 +1281,25 @@ export interface ImportJobsSelect<T extends boolean = true> {
   user?: T;
   userName?: T;
   archiveFile?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "login-challenges_select".
+ */
+export interface LoginChallengesSelect<T extends boolean = true> {
+  key?: T;
+  purpose?: T;
+  user?: T;
+  codeHash?: T;
+  tokenEnc?: T;
+  tokenExp?: T;
+  expiresAt?: T;
+  attempts?: T;
+  sendCount?: T;
+  lastSentAt?: T;
+  ip?: T;
   updatedAt?: T;
   createdAt?: T;
 }
@@ -1046,6 +1413,89 @@ export interface LeaveSetting {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "notification-settings".
+ */
+export interface NotificationSetting {
+  id: number;
+  leaveFiledToEmployee?: boolean | null;
+  leaveStatusToEmployee?: boolean | null;
+  payrollReleasedToEmployee?: boolean | null;
+  registrationToAdmins?: boolean | null;
+  /**
+   * Shared hosting mail servers usually allow 100–500 per hour. Extra emails wait in the queue.
+   */
+  hourlyLimit: number;
+  /**
+   * Where replies go (e.g. the HR office mailbox). Leave blank to use the sender address.
+   */
+  replyTo?: string | null;
+  footer?: string | null;
+  /**
+   * Secret used by the cron job that sends queued emails (/internal/queue?key=…).
+   */
+  queueKey?: string | null;
+  smtpLastError?: string | null;
+  smtpLastErrorAt?: string | null;
+  smtpLastOkAt?: string | null;
+  updatedAt?: string | null;
+  createdAt?: string | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payslip-settings".
+ */
+export interface PayslipSetting {
+  id: number;
+  title: string;
+  /**
+   * Leave blank to use the name from Branding.
+   */
+  companyName?: string | null;
+  /**
+   * One line per row, e.g. address, TIN, contact number.
+   */
+  addressLines?: string | null;
+  showLogo?: boolean | null;
+  currencySymbol?: string | null;
+  /**
+   * These become the columns of the payroll grid, Excel sheet and payslip. Order matters.
+   */
+  earningItems?:
+    | {
+        label: string;
+        id?: string | null;
+      }[]
+    | null;
+  /**
+   * These become the columns of the payroll grid, Excel sheet and payslip. Order matters.
+   */
+  deductionItems?:
+    | {
+        label: string;
+        id?: string | null;
+      }[]
+    | null;
+  show?: {
+    employeeId?: boolean | null;
+    position?: boolean | null;
+    station?: boolean | null;
+    classification?: boolean | null;
+    tin?: boolean | null;
+    sss?: boolean | null;
+    philhealth?: boolean | null;
+    pagibig?: boolean | null;
+  };
+  preparedByName?: string | null;
+  preparedByTitle?: string | null;
+  certifiedByName?: string | null;
+  certifiedByTitle?: string | null;
+  footerNote?: string | null;
+  paperSize: 'A4' | 'Letter' | 'Half-Letter';
+  updatedAt?: string | null;
+  createdAt?: string | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "site-settings_select".
  */
 export interface SiteSettingsSelect<T extends boolean = true> {
@@ -1080,6 +1530,70 @@ export interface LeaveSettingsSelect<T extends boolean = true> {
         allowance?: T;
         id?: T;
       };
+  updatedAt?: T;
+  createdAt?: T;
+  globalType?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "notification-settings_select".
+ */
+export interface NotificationSettingsSelect<T extends boolean = true> {
+  leaveFiledToEmployee?: T;
+  leaveStatusToEmployee?: T;
+  payrollReleasedToEmployee?: T;
+  registrationToAdmins?: T;
+  hourlyLimit?: T;
+  replyTo?: T;
+  footer?: T;
+  queueKey?: T;
+  smtpLastError?: T;
+  smtpLastErrorAt?: T;
+  smtpLastOkAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  globalType?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payslip-settings_select".
+ */
+export interface PayslipSettingsSelect<T extends boolean = true> {
+  title?: T;
+  companyName?: T;
+  addressLines?: T;
+  showLogo?: T;
+  currencySymbol?: T;
+  earningItems?:
+    | T
+    | {
+        label?: T;
+        id?: T;
+      };
+  deductionItems?:
+    | T
+    | {
+        label?: T;
+        id?: T;
+      };
+  show?:
+    | T
+    | {
+        employeeId?: T;
+        position?: T;
+        station?: T;
+        classification?: T;
+        tin?: T;
+        sss?: T;
+        philhealth?: T;
+        pagibig?: T;
+      };
+  preparedByName?: T;
+  preparedByTitle?: T;
+  certifiedByName?: T;
+  certifiedByTitle?: T;
+  footerNote?: T;
+  paperSize?: T;
   updatedAt?: T;
   createdAt?: T;
   globalType?: T;

@@ -7,7 +7,8 @@ import { toFormErrors } from '../../lib/errors'
 import { setFlash } from '../../lib/flash'
 
 const { payload, user } = Astro.locals
-const isAdmin = user?.role === 'super-admin' || user?.role === 'hr-admin'
+// Every approved HR user (System Admin or HR Staff) may manage HR records.
+const canManage = Boolean(user)
 const thisYear = Number(todayYmd().slice(0, 4))
 const year = Number(Astro.url.searchParams.get('year')) || thisYear
 let error = ''
@@ -73,7 +74,7 @@ const overrides = [...(settings.yearOverrides ?? []), { year: null, allowance: n
         <input type="hidden" name="action" value="allowance" />
         <div class="max-w-48">
           <label class="label" for="annualAllowance">Days per year (default)</label>
-          <input class="input" id="annualAllowance" name="annualAllowance" type="number" min="0" max="60" required value={settings.annualAllowance ?? 5} disabled={!isAdmin} />
+          <input class="input" id="annualAllowance" name="annualAllowance" type="number" min="0" max="60" required value={settings.annualAllowance ?? 5} disabled={!canManage} />
         </div>
         <fieldset>
           <legend class="label">Overrides for specific years (optional)</legend>
@@ -81,14 +82,14 @@ const overrides = [...(settings.yearOverrides ?? []), { year: null, allowance: n
           <div class="space-y-2">
             {overrides.map((o) => (
               <div class="flex items-center gap-2">
-                <input class="input max-w-28" name="overrideYear" type="number" min="2000" max="2100" placeholder="Year" value={o.year ?? ''} aria-label="Year" disabled={!isAdmin} />
-                <input class="input max-w-28" name="overrideDays" type="number" min="0" max="60" placeholder="Days" value={o.allowance ?? ''} aria-label="Days" disabled={!isAdmin} />
+                <input class="input max-w-28" name="overrideYear" type="number" min="2000" max="2100" placeholder="Year" value={o.year ?? ''} aria-label="Year" disabled={!canManage} />
+                <input class="input max-w-28" name="overrideDays" type="number" min="0" max="60" placeholder="Days" value={o.allowance ?? ''} aria-label="Days" disabled={!canManage} />
                 <span class="text-xs text-muted">{o.year ? 'Clear both boxes to remove' : 'Add a year'}</span>
               </div>
             ))}
           </div>
         </fieldset>
-        {isAdmin ? <button class="btn-primary">Save allowance</button> : <p class="text-sm text-muted">Only HR Admins can change the allowance.</p>}
+        {canManage ? <button class="btn-primary">Save allowance</button> : null}
       </form>
     </section>
 
@@ -118,7 +119,7 @@ const overrides = [...(settings.yearOverrides ?? []), { year: null, allowance: n
         {holidays.docs.map((h) => (
           <li class="flex items-center justify-between gap-3 py-2 text-sm">
             <span><span class="tabular font-medium">{formatDate(h.date)}</span> · {h.name} <span class="text-xs text-muted">({h.type})</span></span>
-            {isAdmin && (
+            {canManage && (
               <form method="post" data-confirm={`Remove ${h.name}?`}>
                 <input type="hidden" name="action" value="deleteHoliday" />
                 <input type="hidden" name="id" value={h.id} />

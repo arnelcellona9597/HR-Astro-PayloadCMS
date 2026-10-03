@@ -1,5 +1,13 @@
 import { expect, test, type Page } from '@playwright/test'
 import ExcelJS from 'exceljs'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
+const OUTBOX = path.join(os.tmpdir(), `hr-e2e-${process.env.E2E_PORT || '4400'}`, 'outbox.jsonl')
+type Mail = { to: string; subject: string; text?: string; attachments: { filename?: string; contentBase64?: string }[] }
+const mails = (): Mail[] => (fs.existsSync(OUTBOX) ? fs.readFileSync(OUTBOX, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [])
+const codeFor = (email: string) => /(\d{6})/.exec(mails().filter((m) => m.to === email && /sign-in code|Confirm your email/.test(m.subject)).at(-1)?.subject ?? '')?.[1] ?? ''
 
 // One story, in order, against the production build with sample data (see scripts/e2e-server.mjs).
 test.describe.configure({ mode: 'serial' })
@@ -7,11 +15,19 @@ test.describe.configure({ mode: 'serial' })
 const ADMIN = { name: 'Ana Admin', email: 'admin@e2e.test', password: 'Adm1nPassword!' }
 const STAFF = { name: 'Sam Staff', email: 'staff@e2e.test', password: 'St4ffPassword!' }
 
-async function login(page: Page, who: { email: string; password: string }) {
+async function submitPassword(page: Page, who: { email: string; password: string }) {
   await page.goto('/login')
   await page.fill('#email', who.email)
   await page.fill('#password', who.password)
   await page.getByRole('button', { name: 'Sign in' }).click()
+}
+
+/** Password, then the 6-digit code from the (captured) email. */
+async function login(page: Page, who: { email: string; password: string }) {
+  await submitPassword(page, who)
+  await page.waitForURL('**/login/verify')
+  await page.fill('#code', codeFor(who.email))
+  await page.waitForURL((u) => !u.pathname.startsWith('/login'))
 }
 
 async function register(page: Page, who: typeof ADMIN) {
@@ -21,11 +37,22 @@ async function register(page: Page, who: typeof ADMIN) {
   await page.fill('#password', who.password)
   await page.fill('#confirm', who.password)
   await page.locator('form button').click()
+  await page.waitForURL('**/register/verify')
+  await expect(page.getByText('We sent a 6-digit code')).toBeVisible()
+  await page.fill('#code', codeFor(who.email))
+  await page.waitForURL('**/login?notice=*')
 }
 
-test('first account becomes Super Admin and sees the dashboard', async ({ page }) => {
+test('first account becomes System Admin; sign-in needs the emailed code', async ({ page }) => {
   await register(page, ADMIN)
-  await login(page, ADMIN)
+  await expect(page.getByText('Email verified')).toBeVisible()
+  await submitPassword(page, ADMIN)
+  await page.waitForURL('**/login/verify')
+  await page.fill('#code', codeFor(ADMIN.email) === '000000' ? '111111' : '000000')
+  await expect(page.getByText(/not correct\. 4 attempts left/)).toBeVisible()
+  await page.fill('#code', codeFor(ADMIN.email))
+  await page.waitForURL((u) => !u.pathname.startsWith('/login'))
+  await expect(page.getByText(/Signed in until/)).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Employee statistics' })).toBeVisible()
   await expect(page.getByText('Total employees')).toBeVisible()
   await expect(page.getByText('Male and female employees')).toBeVisible()
@@ -34,13 +61,15 @@ test('first account becomes Super Admin and sees the dashboard', async ({ page }
 
 test('new sign-ups wait for approval and staff cannot manage users', async ({ page, browser }) => {
   await register(page, STAFF)
-  await expect(page.getByText('A Super Admin must approve your account')).toBeVisible()
-  await login(page, STAFF)
+  await expect(page.getByText('A System Admin must approve your account')).toBeVisible()
+  await submitPassword(page, STAFF)
   await expect(page.getByText('waiting for approval')).toBeVisible()
 
   const adminCtx = await browser.newContext()
   const admin = await adminCtx.newPage()
   await login(admin, ADMIN)
+  await admin.goto('/notifications')
+  await expect(admin.getByText('New HR account request: Sam Staff')).toBeVisible()
   await admin.goto('/users')
   await admin.getByRole('button', { name: 'Approve as HR Staff' }).click()
   await expect(admin.getByText('Sam Staff can now sign in.')).toBeVisible()
@@ -151,11 +180,78 @@ test('Excel round trip: export, edit one cell, preview, confirm', async ({ page 
   await expect(page.getByText('Imported Title')).toBeVisible()
 })
 
+test('payroll: generate, enter amounts, print, release with PDF payslips', async ({ page }) => {
+  await login(page, ADMIN)
+  await page.goto('/payroll/new')
+  await page.fill('#f-name', 'E2E Payroll')
+  await page.fill('#f-code', 'E2E-1')
+  await page.fill('#f-periodStart', '2026-09-01')
+  await page.fill('#f-periodEnd', '2026-09-15')
+  await page.fill('#f-payDate', '2026-09-20')
+  await page.getByRole('button', { name: 'Create period' }).click()
+  await page.waitForURL(/\/payroll\/\d+$/)
+  const periodUrl = page.url()
+  await page.getByRole('button', { name: 'Generate' }).click()
+  await expect(page.getByText(/payslip\(s\) created/)).toBeVisible()
+
+  // Give every payslip an amount so the period can be released; check one row's totals.
+  const rows = page.locator('tr[data-row]')
+  const count = await rows.count()
+  expect(count).toBeGreaterThan(50)
+  for (let i = 0; i < count; i++) await rows.nth(i).locator('input[data-kind="e"]').first().fill('20000')
+  const first = rows.first()
+  await first.locator('input[data-kind="e"]').nth(1).fill('1,000.50')
+  await first.locator('input[data-kind="d"]').first().fill('1500.25')
+  await expect(first.locator('[data-net]')).toHaveText('₱19,500.25')
+  await page.getByRole('button', { name: 'Save all payslips' }).click()
+  await expect(page.getByText(`Saved ${count} payslip(s).`)).toBeVisible()
+
+  const slipHref = await page.locator('tr[data-row] a[href^="/payroll/payslips/"]').first().getAttribute('href')
+  await page.goto(`${slipHref}/print`)
+  await expect(page.getByText('NET PAY')).toBeVisible()
+  await expect(page.getByText('₱19,500.25')).toBeVisible()
+  const pdf = await page.request.get(`${slipHref}/pdf`)
+  expect(pdf.headers()['content-type']).toBe('application/pdf')
+
+  await page.goto(periodUrl)
+  page.once('dialog', (d) => d.accept())
+  await page.getByRole('button', { name: 'Release payroll' }).click()
+  await expect(page.getByText(/E2E Payroll released/)).toBeVisible()
+  await expect.poll(() => mails().filter((m) => m.subject === 'Your payslip for E2E Payroll').length, { timeout: 30_000 }).toBeGreaterThan(5)
+  const mail = mails().find((m) => m.subject === 'Your payslip for E2E Payroll')!
+  expect(mail.attachments[0]?.filename).toMatch(/^payslip-E2E-1-.*\.pdf$/)
+})
+
+test('messages: send an announcement to a branch group', async ({ page }) => {
+  await login(page, ADMIN)
+  // The payroll release above used up the default 100-per-hour budget; raise it in Email Settings.
+  await page.goto('/settings/notifications')
+  await page.fill('#hourlyLimit', '1000')
+  await page.getByRole('button', { name: 'Save settings' }).click()
+  await expect(page.getByText('Email settings saved.')).toBeVisible()
+  await page.goto('/messages/new')
+  await page.selectOption('#groupBranch', { index: 0 })
+  await page.check('input[name="groupStatus"][value="Active"]')
+  await page.fill('#subject', 'Office closed on Friday')
+  await page.fill('#body', 'Hi {{firstName}},\n\nThe {{station}} office is closed on Friday.')
+  await page.getByRole('button', { name: 'Preview' }).click()
+  await expect(page.locator('#preview-summary')).toContainText('recipient(s) will get this email')
+  page.once('dialog', (d) => d.accept())
+  await page.getByRole('button', { name: 'Send' }).click()
+  await expect(page.getByText(/Message queued for \d+ recipient/)).toBeVisible()
+  await expect.poll(() => mails().filter((m) => m.subject === 'Office closed on Friday').length, { timeout: 30_000 }).toBeGreaterThan(0)
+  await page.reload()
+  await expect(page.locator('main').getByText(/Delivered/)).toBeVisible()
+  const mail = mails().find((m) => m.subject === 'Office closed on Friday')!
+  expect(mail.text).toMatch(/^Office closed on Friday\n\nHi \w+/)
+  expect(mail.text).not.toContain('{{')
+})
+
 test('pages fit a phone screen without sideways scrolling', async ({ browser }) => {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } })
   const page = await ctx.newPage()
   await login(page, ADMIN)
-  for (const path of ['/', '/employees', '/leave', '/branches', '/requirements', '/data', '/login']) {
+  for (const path of ['/', '/employees', '/leave', '/branches', '/requirements', '/payroll', '/messages', '/messages/new', '/data', '/login']) {
     await page.goto(path)
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
     expect(overflow, `${path} overflows by ${overflow}px`).toBeLessThanOrEqual(1)

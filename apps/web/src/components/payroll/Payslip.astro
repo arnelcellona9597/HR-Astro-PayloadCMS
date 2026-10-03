@@ -1,0 +1,73 @@
+---
+// HTML payslip (print pages and the template preview). Mirrors the PDF layout.
+import { detailRows } from '@hr/cms/server/payroll'
+import type { Payslip, PayrollPeriod, PayslipSetting } from '@hr/cms/types'
+import { formatCentavos, formatDate } from '@hr/shared'
+
+interface Props {
+  settings: PayslipSetting
+  companyName: string
+  logoUrl: string | null
+  period: Pick<PayrollPeriod, 'name' | 'periodStart' | 'periodEnd' | 'payDate'>
+  slip: Payslip
+}
+const { settings, companyName, logoUrl, period, slip } = Astro.props
+const sym = settings.currencySymbol || '₱'
+const money = (n: number | null | undefined) => formatCentavos(Math.round((n ?? 0) * 100), sym)
+const rows = detailRows({ settings, slip } as never)
+const lines = (settings.addressLines ?? '').split('\n').map((l) => l.trim()).filter(Boolean)
+const width = settings.paperSize === 'Half-Letter' ? 'max-w-[5.5in]' : 'max-w-[8.27in]'
+const sigs = [
+  ['Prepared by', settings.preparedByName, settings.preparedByTitle],
+  ['Certified correct', settings.certifiedByName, settings.certifiedByTitle],
+].filter(([, n]) => n)
+---
+<article class:list={['sheet mx-auto mb-6 rounded-lg border border-line bg-white p-8 text-[13px] text-[#111418] shadow-sm', width]}>
+  <header class="flex items-center gap-3 border-b border-[#dfe1e5] pb-3">
+    {settings.showLogo !== false && logoUrl && <img src={logoUrl} alt="" class="h-12 w-auto object-contain" />}
+    <div>
+      <p class="text-lg font-bold">{companyName}</p>
+      {lines.map((l) => <p class="text-xs text-[#6b7280]">{l}</p>)}
+    </div>
+  </header>
+  <div class="mt-3 flex items-baseline justify-between gap-3">
+    <h2 class="text-base font-bold tracking-wide">{settings.title || 'PAYSLIP'}</h2>
+    <p class="font-semibold">{period.name}</p>
+  </div>
+  <div class="flex justify-between text-xs text-[#6b7280]">
+    <span>Period: {formatDate(period.periodStart)} – {formatDate(period.periodEnd)}</span>
+    <span>Pay date: {formatDate(period.payDate)}</span>
+  </div>
+  <dl class="mt-4 grid grid-cols-2 gap-x-6 gap-y-1.5">
+    {rows.map(([k, v]) => (
+      <div class="flex gap-2"><dt class="w-28 shrink-0 text-xs text-[#6b7280]">{k}</dt><dd class="font-medium">{v || '—'}</dd></div>
+    ))}
+  </dl>
+  {[['Earnings', slip.earnings, 'Gross pay', slip.grossPay], ['Deductions', slip.deductions, 'Total deductions', slip.totalDeductions]].map(([title, items, totalLabel, total]) => (
+    <table class="mt-5 w-full">
+      <thead><tr class="bg-[#f2f4f7]"><th class="px-2 py-1.5 text-left">{title as string}</th><th class="px-2 py-1.5 text-right">Amount</th></tr></thead>
+      <tbody>
+        {((items as { label: string; amount: number }[] | null) ?? []).filter((i) => i.amount).map((i) => (
+          <tr><td class="px-2 py-1">{i.label}</td><td class="px-2 py-1 text-right tabular-nums">{money(i.amount)}</td></tr>
+        ))}
+        <tr class="border-t border-[#dfe1e5] font-semibold"><td class="px-2 py-1.5">{totalLabel as string}</td><td class="px-2 py-1.5 text-right tabular-nums">{money(total as number)}</td></tr>
+      </tbody>
+    </table>
+  ))}
+  <div class="mt-5 flex items-center justify-between rounded-md border border-[#b3c7eb] bg-[#ebf2ff] px-3 py-2.5">
+    <span class="font-bold">NET PAY</span><span class="text-lg font-bold tabular-nums">{money(slip.netPay)}</span>
+  </div>
+  {slip.remarks && <p class="mt-3 text-xs text-[#6b7280]">Remarks: {slip.remarks}</p>}
+  {sigs.length > 0 && (
+    <div class="mt-10 grid grid-cols-2 gap-8">
+      {sigs.map(([label, name, title]) => (
+        <div>
+          <p class="text-xs text-[#6b7280]">{label}</p>
+          <div class="mt-6 border-t border-[#6b7280] pt-1 font-semibold">{name}</div>
+          {title && <p class="text-xs text-[#6b7280]">{title}</p>}
+        </div>
+      ))}
+    </div>
+  )}
+  {settings.footerNote && <p class="mt-8 text-[11px] text-[#6b7280]">{settings.footerNote}</p>}
+</article>

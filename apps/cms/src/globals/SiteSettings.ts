@@ -1,7 +1,7 @@
 import { DEFAULT_PALETTE, HEX_RE, PALETTE_KEYS, options } from '@hr/shared'
 import type { Field, GlobalConfig } from 'payload'
 
-import { anyone, isSuperAdmin } from '../access'
+import { anyone, isStaff } from '../access'
 import { writeAudit, diffDocs } from '../hooks/audit'
 
 const colorField = (key: (typeof PALETTE_KEYS)[number]): Field => ({
@@ -18,7 +18,7 @@ export const SiteSettings: GlobalConfig = {
   label: 'Branding & Theme',
   admin: { group: 'Settings' },
   // Read is public: the login page needs the company name, logo and colors.
-  access: { read: anyone, update: isSuperAdmin },
+  access: { read: anyone, update: isStaff },
   fields: [
     { name: 'companyName', type: 'text', required: true, defaultValue: 'HR Management System', maxLength: 120 },
     { name: 'tagline', type: 'text', maxLength: 160 },

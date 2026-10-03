@@ -27,7 +27,8 @@ const state = await handleSave(Astro, {
 if (state.redirect) return state.redirect
 const branches = await branchChoices(payload)
 const employeeId = relId(app.employee)
-const isAdmin = user?.role === 'super-admin' || user?.role === 'hr-admin'
+// Every approved HR user (System Admin or HR Staff) may manage HR records.
+const canManage = Boolean(user)
 ---
 <App title={app.applicantName} heading={app.applicantName} description={`${app.applicationId} · ${app.positionApplied}`} back={{ href: '/onboarding', label: 'Onboarding tracker' }}>
   <Fragment slot="actions">
@@ -39,7 +40,7 @@ const isAdmin = user?.role === 'super-admin' || user?.role === 'hr-admin'
         <a class="btn-primary" href={`/employees/new?fromApplication=${id}`}><Icon name="user" /> Convert to employee</a>
       )
     }
-    {isAdmin && (
+    {canManage && (
       <form method="post" action={`/onboarding/${id}?action=delete`} data-confirm={`Delete application ${app.applicationId}?`}>
         <button class="btn-danger"><Icon name="trash" /> Delete</button>
       </form>

@@ -1,0 +1,56 @@
+---
+import { payrollTotals } from '@hr/cms/server/stats'
+import { formatCentavos, formatDate } from '@hr/shared'
+
+import EmptyState from '../../components/EmptyState.astro'
+import Icon from '../../components/Icon.astro'
+import App from '../../layouts/App.astro'
+
+const { payload, user } = Astro.locals
+const [periods, totals] = await Promise.all([
+  payload.find({ collection: 'payroll-periods', sort: '-periodStart', pagination: false, depth: 0, user, overrideAccess: false }),
+  payrollTotals(payload),
+])
+const peso = (n: number) => formatCentavos(Math.round(n * 100))
+---
+<App title="Payroll" heading="Payroll" description="Payroll records and payslips. Amounts are entered by HR; the system adds up the totals, prints payslips and emails them as PDFs.">
+  <Fragment slot="actions">
+    <a class="btn-secondary" href="/payroll/settings"><Icon name="settings" /> Payslip template</a>
+    <a class="btn-primary" href="/payroll/new"><Icon name="plus" /> New payroll period</a>
+  </Fragment>
+  <div class="card overflow-hidden">
+    {
+      periods.docs.length === 0 ? (
+        <EmptyState title="No payroll periods yet" text="Create a period (e.g. 'October 2026 — 1st half'), then generate payslips for your active employees.">
+          <a class="btn-primary" href="/payroll/new">New payroll period</a>
+        </EmptyState>
+      ) : (
+        <div class="overflow-x-auto">
+          <table class="table">
+            <thead><tr><th>Period</th><th>Code</th><th>Dates</th><th>Pay date</th><th class="text-right">Payslips</th><th class="text-right">Gross</th><th class="text-right">Net</th><th>Status</th></tr></thead>
+            <tbody>
+              {periods.docs.map((p) => {
+                const t = totals.get(p.id)
+                return (
+                  <tr>
+                    <td class="font-medium"><a class="hover:text-primary-ink" href={`/payroll/${p.id}`}>{p.name}</a></td>
+                    <td class="font-mono text-xs text-fg-2">{p.code}</td>
+                    <td class="whitespace-nowrap tabular text-fg-2">{formatDate(p.periodStart)} – {formatDate(p.periodEnd)}</td>
+                    <td class="whitespace-nowrap tabular">{formatDate(p.payDate)}</td>
+                    <td class="text-right tabular">{t?.count ?? 0}</td>
+                    <td class="text-right tabular">{peso(t?.gross ?? 0)}</td>
+                    <td class="text-right tabular font-medium">{peso(t?.net ?? 0)}</td>
+                    <td>
+                      <span class={p.status === 'Released' ? 'badge-success' : 'badge-warning'}>{p.status}</span>
+                      {t?.corrected ? <span class="ml-1 badge-danger" title="Payslips changed after release">{t.corrected} corrected</span> : null}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )
+    }
+  </div>
+</App>

@@ -1,0 +1,373 @@
+---
+// A chart card: canvas (Chart.js: bar, line, area or doughnut), an HTML legend for 2+ series, and a
+// table view so every value is readable without hovering or relying on color.
+import Icon from '../Icon.astro'
+import type { ChartSpec } from './types'
+
+interface Props {
+  title: string
+  subtitle?: string
+  spec: ChartSpec
+  /** Canvas height in px; horizontal bar charts grow with the number of bars. */
+  height?: number
+  emptyText?: string
+  /** Heading level of the card title (3 when the card sits inside a titled section). */
+  level?: 2 | 3
+  /** Doughnut only: big number shown in the hole, e.g. the total. */
+  center?: { value: string; label: string }
+}
+const { title, subtitle, spec, emptyText = 'No data yet.', level = 2, center } = Astro.props
+const kind = spec.kind ?? 'bar'
+const isEmpty = spec.labels.length === 0 || spec.series.every((s) => s.data.every((v) => !v))
+const height = Astro.props.height ?? (kind === 'bar' && spec.horizontal ? Math.max(160, spec.labels.length * 30 + 40) : kind === 'doughnut' ? 190 : 280)
+const id = `chart-${Math.random().toString(36).slice(2, 9)}`
+const totals = spec.labels.map((_, i) => spec.series.reduce((sum, s) => sum + (s.data[i] ?? 0), 0))
+const H = level === 3 ? 'h3' : 'h2'
+const doughnutTotal = kind === 'doughnut' ? (spec.series[0]?.data ?? []).reduce((a, b) => a + b, 0) : 0
+const share = (v: number) => (doughnutTotal ? `${Math.round((v / doughnutTotal) * 1000) / 10}%` : '0%')
+---
+<section class="card flex min-w-0 flex-col p-4 sm:p-5" aria-labelledby={`${id}-title`}>
+  <header class="mb-4 flex items-start justify-between gap-3">
+    <div class="min-w-0">
+      <H id={`${id}-title`} class="text-sm font-semibold text-fg">{title}</H>
+      {subtitle && <p class="mt-0.5 text-xs text-muted">{subtitle}</p>}
+    </div>
+    <slot name="meta" />
+  </header>
+  {
+    isEmpty ? (
+      <div class="flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-line py-10 text-center" style={`min-height:${Math.min(height, 220)}px`}>
+        <span class="flex size-9 items-center justify-center rounded-full bg-surface-2 text-muted">
+          <Icon name="activity" class="size-4" />
+        </span>
+        <p class="text-sm text-muted">{emptyText}</p>
+      </div>
+    ) : (
+      <>
+        {kind === 'doughnut' ? (
+          <div class="flex flex-1 flex-col items-center justify-center gap-5">
+            <div class="relative w-full max-w-[200px]" style={`height:${height}px`}>
+              <canvas class="block h-full w-full max-w-full" data-chart={JSON.stringify(spec)} role="img" aria-label={`${title}. Values are listed below the chart.`} />
+              {center && (
+                <div class="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+                  <span class="text-2xl font-semibold tracking-tight tabular">{center.value}</span>
+                  <span class="text-xs text-muted">{center.label}</span>
+                </div>
+              )}
+            </div>
+            <ul class="w-full space-y-2 text-sm" aria-label="Legend">
+              {spec.labels.map((label, i) => (
+                <li class="flex items-center gap-2.5">
+                  <span class="inline-block size-2.5 shrink-0 rounded-sm" style={`background: var(--series-${spec.sliceSlots?.[i] ?? ((i % 4) + 1)})`} />
+                  <span class="min-w-0 flex-1 truncate text-fg-2">{label}</span>
+                  <span class="font-medium tabular">{(spec.series[0]?.data[i] ?? 0).toLocaleString()}</span>
+                  <span class="w-12 text-right text-xs text-muted tabular">{share(spec.series[0]?.data[i] ?? 0)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <>
+            {spec.series.length > 1 && (
+              <ul class="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-fg-2" aria-label="Legend">
+                {spec.series.map((s) => (
+                  <li class="flex items-center gap-1.5">
+                    <span class="inline-block size-2.5 rounded-sm" style={`background: var(--series-${s.slot})`} />
+                    {s.label}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div class="relative" style={`height:${height}px`}>
+              <canvas class="block h-full w-full max-w-full" data-chart={JSON.stringify(spec)} role="img" aria-label={`${title}. Values are listed in the table below.`} />
+            </div>
+          </>
+        )}
+        <details class="mt-3 text-sm">
+          <summary class="cursor-pointer select-none text-xs font-medium text-muted transition-colors hover:text-fg">View as table</summary>
+          <div class="mt-2 max-h-72 overflow-auto rounded-lg border border-line">
+            <table class="table tabular">
+              <thead>
+                <tr>
+                  <th scope="col">Category</th>
+                  {spec.series.map((s) => <th scope="col" class="text-right">{s.label}</th>)}
+                  {spec.series.length > 1 && <th scope="col" class="text-right">Total</th>}
+                  {kind === 'doughnut' && <th scope="col" class="text-right">Share</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {spec.labels.map((label, i) => (
+                  <tr>
+                    <th scope="row" class="!bg-transparent !text-sm !font-normal !normal-case !tracking-normal !text-fg">{label}</th>
+                    {spec.series.map((s) => <td class="text-right">{(s.data[i] ?? 0).toLocaleString()}</td>)}
+                    {spec.series.length > 1 && <td class="text-right font-medium">{totals[i]!.toLocaleString()}</td>}
+                    {kind === 'doughnut' && <td class="text-right">{share(totals[i]!)}</td>}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      </>
+    )
+  }
+</section>
+
+<script>
+  import {
+    ArcElement,
+    BarController,
+    BarElement,
+    CategoryScale,
+    Chart,
+    DoughnutController,
+    Filler,
+    LinearScale,
+    LineController,
+    LineElement,
+    PointElement,
+    Tooltip,
+    type ChartConfiguration,
+    type ChartDataset,
+  } from 'chart.js'
+  import type { ChartSpec } from './types'
+
+  Chart.register(BarController, BarElement, LineController, LineElement, PointElement, Filler, DoughnutController, ArcElement, CategoryScale, LinearScale, Tooltip)
+
+  const css = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)')
+  const font = () => getComputedStyle(document.body).fontFamily
+
+  /** '#rrggbb' + alpha → rgba() (series tokens are plain hex). */
+  const alpha = (hex: string, a: number) => {
+    const n = parseInt(hex.replace('#', ''), 16)
+    return Number.isNaN(n) ? hex : `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`
+  }
+
+  // Direct value labels at the bar tip (single-series charts only — never a number on every segment).
+  const valueLabelPlugin = {
+    id: 'hrValueLabels',
+    afterDatasetsDraw(chart: Chart) {
+      const spec = (chart.options.plugins as { hrSpec?: ChartSpec }).hrSpec
+      if (!spec?.valueLabels || spec.series.length !== 1 || (spec.kind ?? 'bar') !== 'bar') return
+      const { ctx } = chart
+      const meta = chart.getDatasetMeta(0)
+      ctx.save()
+      ctx.fillStyle = css('--chart-ink')
+      ctx.font = `500 12px ${font()}`
+      meta.data.forEach((bar, i) => {
+        const v = spec.series[0]!.data[i]
+        if (!v) return
+        const { x, y } = bar.getProps(['x', 'y'], true) as { x: number; y: number }
+        if (spec.horizontal) {
+          ctx.textAlign = 'left'
+          ctx.textBaseline = 'middle'
+          ctx.fillText(v.toLocaleString(), x + 6, y)
+        } else {
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'bottom'
+          ctx.fillText(v.toLocaleString(), x, y - 4)
+        }
+      })
+      ctx.restore()
+    },
+  }
+
+  const charts = new Map<HTMLCanvasElement, Chart>()
+
+  function render(canvas: HTMLCanvasElement, animate: boolean) {
+    const spec = JSON.parse(canvas.dataset.chart!) as ChartSpec
+    const kind = spec.kind ?? 'bar'
+    charts.get(canvas)?.destroy()
+    const surface = css('--surface')
+    const grid = css('--chart-grid')
+    const ink = css('--chart-ink')
+    const family = font()
+    const tooltip = {
+      backgroundColor: surface,
+      titleColor: css('--fg'),
+      bodyColor: css('--fg-2'),
+      borderColor: css('--border-strong'),
+      borderWidth: 1,
+      padding: 10,
+      boxPadding: 4,
+      cornerRadius: 8,
+      usePointStyle: true,
+      titleFont: { family, weight: 600 as const },
+      bodyFont: { family },
+      callbacks: {
+        label: (item: { raw: unknown; dataset: { label?: string }; label: string }) =>
+          kind === 'doughnut'
+            ? ` ${Number(item.raw).toLocaleString()}${spec.unit ? ` ${spec.unit}` : ''}`
+            : ` ${Number(item.raw).toLocaleString()}${spec.unit ? ` ${spec.unit}` : ''} — ${item.dataset.label}`,
+      },
+    }
+    const animation = animate && !reducedMotion.matches ? { duration: 450, easing: 'easeOutQuart' as const } : (false as const)
+
+    let config: ChartConfiguration
+    if (kind === 'doughnut') {
+      const s = spec.series[0]!
+      const doughnut: ChartConfiguration<'doughnut'> = {
+        type: 'doughnut',
+        data: {
+          labels: spec.labels,
+          datasets: [
+            {
+              label: s.label,
+              data: s.data,
+              backgroundColor: spec.labels.map((_, i) => css(`--series-${spec.sliceSlots?.[i] ?? (i % 4) + 1}`)),
+              borderColor: surface,
+              borderWidth: 2,
+              hoverOffset: 4,
+              borderRadius: 3,
+            },
+          ],
+        },
+        options: { maintainAspectRatio: false, cutout: '74%', animation, plugins: { legend: { display: false }, tooltip } },
+      }
+      config = doughnut as unknown as ChartConfiguration
+    } else if (kind === 'line' || kind === 'area') {
+      const line: ChartConfiguration<'line'> = {
+        type: 'line',
+        data: {
+          labels: spec.labels,
+          datasets: spec.series.map(
+            (s): ChartDataset<'line'> => {
+              const color = css(`--series-${s.slot}`)
+              return {
+                label: s.label,
+                data: s.data,
+                borderColor: color,
+                borderWidth: 2,
+                tension: 0.35,
+                cubicInterpolationMode: 'monotone',
+                pointRadius: spec.labels.length <= 14 ? 3 : 0,
+                pointBackgroundColor: surface,
+                pointBorderColor: color,
+                pointBorderWidth: 2,
+                pointHoverRadius: 5,
+                pointHoverBackgroundColor: color,
+                pointHoverBorderColor: surface,
+                pointHitRadius: 14,
+                fill: kind === 'area' ? 'origin' : false,
+                backgroundColor: (ctx) => {
+                  const area = ctx.chart.chartArea
+                  if (!area) return alpha(color, 0.12)
+                  const g = ctx.chart.ctx.createLinearGradient(0, area.top, 0, area.bottom)
+                  g.addColorStop(0, alpha(color, 0.22))
+                  g.addColorStop(1, alpha(color, 0))
+                  return g
+                },
+              }
+            },
+          ),
+        },
+        options: {
+          maintainAspectRatio: false,
+          animation,
+          interaction: { mode: 'index', intersect: false },
+          scales: {
+            y: {
+              beginAtZero: true,
+              grid: { color: grid, drawTicks: false },
+              border: { display: false },
+              ticks: { color: ink, precision: 0, padding: 8, font: { size: 11, family } },
+            },
+            x: {
+              grid: { display: false },
+              border: { color: css('--chart-axis') },
+              ticks: { color: ink, font: { size: 11, family }, maxRotation: 0, autoSkipPadding: 12 },
+            },
+          },
+          plugins: { legend: { display: false }, tooltip },
+        },
+      }
+      config = line as unknown as ChartConfiguration
+    } else {
+      const last = spec.series.length - 1
+      const valueAxis = spec.horizontal ? 'x' : 'y'
+      const catAxis = spec.horizontal ? 'y' : 'x'
+      config = {
+        type: 'bar',
+        data: {
+          labels: spec.labels,
+          datasets: spec.series.map((s, i) => ({
+            label: s.label,
+            data: s.data,
+            backgroundColor: css(`--series-${s.slot}`),
+            hoverBackgroundColor: css(`--series-${s.slot}`),
+            maxBarThickness: 24,
+            // 4px rounded data-end, square at the baseline; stacked segments separated by a 2px surface gap
+            borderRadius: spec.stacked ? (i === last ? 4 : 0) : 4,
+            borderSkipped: 'start' as const,
+            borderWidth: spec.stacked ? 2 : 0,
+            borderColor: surface,
+            categoryPercentage: 0.7,
+            barPercentage: 0.9,
+          })),
+        },
+        options: {
+          indexAxis: spec.horizontal ? 'y' : 'x',
+          maintainAspectRatio: false,
+          animation,
+          layout: { padding: spec.valueLabels ? (spec.horizontal ? { right: 40 } : { top: 18 }) : 0 },
+          interaction: { mode: 'index', intersect: false, axis: spec.horizontal ? 'y' : 'x' },
+          scales: {
+            [valueAxis]: {
+              stacked: spec.stacked,
+              beginAtZero: true,
+              grid: { color: grid, drawTicks: false },
+              border: { display: false },
+              ticks: { color: ink, precision: 0, padding: 6, font: { size: 11, family } },
+            },
+            [catAxis]: {
+              stacked: spec.stacked,
+              grid: { display: false },
+              border: { color: css('--chart-axis') },
+              ticks: {
+                color: ink,
+                font: { size: 11, family },
+                autoSkip: !spec.horizontal,
+                // Long category names would push the bars off narrow screens: shorten them there
+                // (the full names stay in the tooltip and the table view).
+                callback(value) {
+                  const label = String(this.getLabelForValue(Number(value)))
+                  const max = canvas.clientWidth < 520 ? 18 : 40
+                  return label.length > max ? `${label.slice(0, max - 1)}…` : label
+                },
+              },
+            },
+          },
+          plugins: {
+            // @ts-expect-error custom option read by valueLabelPlugin
+            hrSpec: spec,
+            legend: { display: false },
+            tooltip,
+          },
+        },
+        plugins: [valueLabelPlugin],
+      }
+    }
+    charts.set(canvas, new Chart(canvas, config))
+  }
+
+  // Draw each chart when it scrolls into view (cheaper first paint), then on theme changes.
+  const canvases = () => document.querySelectorAll<HTMLCanvasElement>('canvas[data-chart]')
+  const io =
+    'IntersectionObserver' in window
+      ? new IntersectionObserver(
+          (entries) => {
+            for (const e of entries) {
+              if (!e.isIntersecting) continue
+              io!.unobserve(e.target)
+              render(e.target as HTMLCanvasElement, true)
+            }
+          },
+          { rootMargin: '200px' },
+        )
+      : null
+  canvases().forEach((c) => (io ? io.observe(c) : render(c, false)))
+  const rerender = () => charts.forEach((_, canvas) => render(canvas, false))
+  // Fired by the theme toggle and when a device-following theme changes (Base.astro).
+  window.addEventListener('hr:theme', rerender)
+</script>

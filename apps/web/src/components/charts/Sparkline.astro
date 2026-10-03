@@ -1,0 +1,36 @@
+---
+// Tiny trend line rendered on the server as SVG (no JavaScript). Decorative: the card states the
+// numbers in text, so the sparkline is hidden from screen readers.
+import type { SeriesSlot } from './types'
+
+interface Props {
+  data: number[]
+  series?: SeriesSlot
+  width?: number
+  height?: number
+}
+const { data, series = 1, width = 96, height = 32 } = Astro.props
+const id = `spark-${Math.random().toString(36).slice(2, 9)}`
+const max = Math.max(1, ...data)
+const pad = 2
+const step = data.length > 1 ? (width - pad * 2) / (data.length - 1) : 0
+const pts = data.map((v, i) => [pad + i * step, height - pad - (v / max) * (height - pad * 2)] as const)
+const line = pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ')
+const area = pts.length ? `${line} L${pts[pts.length - 1]![0].toFixed(1)} ${height} L${pts[0]![0].toFixed(1)} ${height} Z` : ''
+const color = `var(--series-${series})`
+---
+{
+  data.length > 1 && (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} class="overflow-visible" aria-hidden="true">
+      <defs>
+        <linearGradient id={id} x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stop-color={color} stop-opacity="0.22" />
+          <stop offset="100%" stop-color={color} stop-opacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={area} fill={`url(#${id})`} />
+      <path d={line} fill="none" stroke={color} stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" />
+      <circle cx={pts[pts.length - 1]![0]} cy={pts[pts.length - 1]![1]} r="2.5" fill={color} />
+    </svg>
+  )
+}

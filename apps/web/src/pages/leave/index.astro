@@ -6,11 +6,11 @@ import { formatDate, todayYmd } from '@hr/shared'
 import { LEAVE_STATUS_OPTIONS } from '@hr/shared/modules'
 import type { Where } from 'payload'
 
-import BarChart from '../../components/charts/BarChart.astro'
+import Chart from '../../components/charts/Chart.astro'
 import EmptyState from '../../components/EmptyState.astro'
 import Icon from '../../components/Icon.astro'
 import Pagination from '../../components/Pagination.astro'
-import StatTile from '../../components/StatTile.astro'
+import StatCard from '../../components/StatCard.astro'
 import App from '../../layouts/App.astro'
 import { statusBadge } from '../../lib/format'
 
@@ -73,20 +73,20 @@ const exportQuery = new URLSearchParams({ module: 'wellness-leaves', year: Strin
   </div>
 
   <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
-    <StatTile label="Leave filings" value={filings} note="Approved and pending" />
-    <StatTile label="Days used" value={daysUsed} note={`of ${(allowance * activeCount.totalDocs).toLocaleString()} available to active staff`} />
-    <StatTile label="Employees who filed" value={stats.employeesWithLeave} note={`of ${activeCount.totalDocs} active employees`} />
-    <StatTile label="Disapproved / cancelled" value={stats.byStatus.filter((s) => s.status === 'Disapproved' || s.status === 'Cancelled').reduce((a, b) => a + b.count, 0)} />
+    <StatCard label="Leave filings" value={filings} note="Approved and pending" />
+    <StatCard label="Days used" value={daysUsed} note={`of ${(allowance * activeCount.totalDocs).toLocaleString()} available to active staff`} />
+    <StatCard label="Employees who filed" value={stats.employeesWithLeave} note={`of ${activeCount.totalDocs} active employees`} />
+    <StatCard label="Disapproved / cancelled" value={stats.byStatus.filter((s) => s.status === 'Disapproved' || s.status === 'Cancelled').reduce((a, b) => a + b.count, 0)} />
   </div>
 
   <div class="mt-4 grid items-start gap-4 xl:grid-cols-2">
-    <BarChart
+    <Chart
       title="Leave days per month"
       subtitle={`Working days taken in ${year}, by month the leave starts`}
       spec={{ labels: MONTHS, series: [{ label: 'Days taken', data: monthly('days'), slot: 1 }], valueLabels: true, unit: 'days' }}
       height={240}
     />
-    <BarChart
+    <Chart
       title="Most leave days used"
       subtitle={`Top employees in ${year} (allowance: ${allowance} days)`}
       spec={{

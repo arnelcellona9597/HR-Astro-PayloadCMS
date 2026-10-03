@@ -6,7 +6,7 @@ import EmptyState from '../../components/EmptyState.astro'
 import Icon from '../../components/Icon.astro'
 import Pagination from '../../components/Pagination.astro'
 import SortHeader from '../../components/SortHeader.astro'
-import StatTile from '../../components/StatTile.astro'
+import StatCard from '../../components/StatCard.astro'
 import App from '../../layouts/App.astro'
 import { relName, statusBadge } from '../../lib/format'
 
@@ -90,7 +90,7 @@ exportQuery.set('module', 'applications')
   </Fragment>
 
   <div class="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-    {statusCounts.map((s) => <StatTile label={s.status} value={s.count} href={`/onboarding?status=${encodeURIComponent(s.status)}`} />)}
+    {statusCounts.map((s) => <StatCard label={s.status} value={s.count} href={`/onboarding?status=${encodeURIComponent(s.status)}`} />)}
   </div>
 
   <section class="mt-6 grid gap-4 lg:grid-cols-4" aria-label="Workforce movement">

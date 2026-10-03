@@ -21,6 +21,8 @@ const env = {
   SMTP_HOST: '',
   HR_EMAIL_CAPTURE: '1',
   HR_E2E: '1',
+  // The whole suite signs in ~25 times from one address; the security test checks the limit holds.
+  HR_AUTH_RATE_LIMIT: '60',
 }
 // Runs migrations (production mode) and loads the sample data.
 execFileSync(path.join(root, 'node_modules/.bin/tsx'), ['src/seed/index.ts'], {

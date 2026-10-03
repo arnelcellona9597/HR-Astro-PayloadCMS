@@ -1,0 +1,105 @@
+---
+import { formatDate } from '@hr/shared'
+import type { Where } from 'payload'
+
+import EmptyState from '../../components/EmptyState.astro'
+import Icon from '../../components/Icon.astro'
+import Pagination from '../../components/Pagination.astro'
+import App from '../../layouts/App.astro'
+
+const { payload, user } = Astro.locals
+const p = Astro.url.searchParams
+const q = (p.get('q') ?? '').trim().slice(0, 100)
+const templateId = Number(p.get('template')) || null
+const status = ['Valid', 'Void'].includes(p.get('status') ?? '') ? p.get('status') : null
+const page = Math.max(1, Number(p.get('page')) || 1)
+
+const and: Where[] = []
+if (q) and.push({ or: [{ controlNumber: { like: q } }, { employeeName: { like: q } }, { purpose: { like: q } }] })
+if (templateId) and.push({ template: { equals: templateId } })
+if (status) and.push({ status: { equals: status } })
+
+const [certs, templates] = await Promise.all([
+  payload.find({ collection: 'certificates', where: and.length ? { and } : {}, sort: ['-createdAt', '-id'], page, limit: 25, depth: 0, user, overrideAccess: false }),
+  payload.find({ collection: 'certificate-templates', sort: ['sortOrder', 'name'], pagination: false, depth: 0, user, overrideAccess: false, select: { name: true, active: true } }),
+])
+const filtered = Boolean(q || templateId || status)
+---
+<App title="Certificates" heading="Certificates of employment" description="Issue, print and track numbered certificates. Each certificate keeps the exact text it was issued with.">
+  <Fragment slot="actions">
+    <a class="btn-secondary" href="/certificates/templates"><Icon name="settings" /> Templates</a>
+    <a class="btn-primary" href="/certificates/new"><Icon name="plus" /> Issue certificate</a>
+  </Fragment>
+
+  <form method="get" class="card mb-4 flex flex-wrap items-end gap-3 p-4" data-autosubmit>
+    <div class="relative min-w-56 flex-1">
+      <label for="q" class="label">Search</label>
+      <input class="input" id="q" name="q" type="search" value={q} placeholder="Control number, employee or purpose" />
+    </div>
+    <div>
+      <label for="template" class="label">Certificate</label>
+      <select class="input" id="template" name="template">
+        <option value="">All certificates</option>
+        {templates.docs.map((t) => <option value={t.id} selected={t.id === templateId}>{t.name}</option>)}
+      </select>
+    </div>
+    <div>
+      <label for="status" class="label">Status</label>
+      <select class="input" id="status" name="status">
+        <option value="">Any</option>
+        {['Valid', 'Void'].map((s) => <option selected={s === status}>{s}</option>)}
+      </select>
+    </div>
+    <button class="btn-secondary"><Icon name="search" /> Search</button>
+    {filtered && <a class="btn-ghost" href="/certificates">Clear</a>}
+  </form>
+
+  <div class="card overflow-hidden">
+    {
+      certs.docs.length === 0 ? (
+        <EmptyState title={filtered ? 'No certificates match.' : 'No certificates issued yet.'} text={filtered ? 'Try another search.' : 'Issue the first one; it gets a control number like COE-2026-0001.'}>
+          <a class="btn-primary" href="/certificates/new"><Icon name="plus" /> Issue certificate</a>
+        </EmptyState>
+      ) : (
+        <>
+          <div class="overflow-x-auto">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Control No.</th>
+                  <th>Employee</th>
+                  <th>Certificate</th>
+                  <th class="hidden lg:table-cell">Purpose</th>
+                  <th>Issued</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {certs.docs.map((c) => (
+                  <tr>
+                    <td class="whitespace-nowrap font-medium tabular">
+                      <a href={`/certificates/${c.id}`} class="text-primary-ink hover:underline">{c.controlNumber}</a>
+                    </td>
+                    <td>{c.employeeName}</td>
+                    <td class="text-fg-2">{c.templateName}</td>
+                    <td class="hidden max-w-xs truncate text-fg-2 lg:table-cell" title={c.purpose ?? ''}>{c.purpose || '—'}</td>
+                    <td class="whitespace-nowrap text-fg-2">
+                      {formatDate(c.issuedDate)}
+                      <span class="block text-xs text-muted">{c.issuedByName}</span>
+                    </td>
+                    <td><span class={c.status === 'Void' ? 'badge-danger' : 'badge-success'}>{c.status}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Pagination page={certs.page ?? 1} totalPages={certs.totalPages} totalDocs={certs.totalDocs} limit={25} />
+        </>
+      )
+    }
+  </div>
+</App>
+
+<script>
+  document.querySelectorAll<HTMLFormElement>('form[data-autosubmit] select').forEach((s) => s.addEventListener('change', () => s.form?.requestSubmit()))
+</script>

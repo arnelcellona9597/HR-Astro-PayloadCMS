@@ -114,7 +114,7 @@ test('security: encoded login URLs are blocked, headers are set, rate limits hol
 
   // A spoofed (leftmost) X-Forwarded-For doesn't give a fresh rate-limit budget.
   let limited = false
-  for (let i = 0; i < 25 && !limited; i++) {
+  for (let i = 0; i < 70 && !limited; i++) {
     const r = await request.post('/forgot-password', {
       form: { email: `nobody${i}@x.test` },
       headers: { 'X-Forwarded-For': `10.9.${i}.1, 198.51.100.7`, Origin: new URL(page.url()).origin },
@@ -340,6 +340,79 @@ test('HR Staff change their own profile picture; it shows in the header and HR a
   await expect(page.locator('#user-menu-button img')).toHaveCount(0)
 })
 
+test('certificates: edit a template by drag and drop, issue, print, PDF and void', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await login(page, ADMIN)
+  await page.goto('/certificates/templates')
+  await page.getByRole('link', { name: 'Certificate of Employment', exact: true }).click()
+  const blocks = page.locator('#ed-paper .ed-block')
+  const count = await blocks.count()
+
+  // Drag a footnote from the palette to the very top of the page.
+  const from = (await page.locator('[data-palette-type="footer"]').boundingBox())!
+  const to = (await blocks.first().boundingBox())!
+  await page.mouse.move(from.x + 20, from.y + 10)
+  await page.mouse.down()
+  await page.mouse.move(from.x + 120, from.y + 40, { steps: 4 })
+  await page.mouse.move(to.x + 80, to.y + 2, { steps: 8 })
+  await page.mouse.up()
+  await expect(blocks).toHaveCount(count + 1)
+  await expect(blocks.first()).toHaveAttribute('aria-label', /^1\. Footnote/)
+
+  // Edit it in the property panel; a placeholder chip inserts at the cursor.
+  const text = page.locator('#ed-inspector textarea[data-key="text"]')
+  await text.fill('Reference: ')
+  await page.locator('[data-ph="employeeId"]').click()
+  await expect(text).toHaveValue('Reference: {{employeeId}}')
+  await expect(blocks.first()).toContainText('Reference: EMP-0001')
+  // Keyboard reordering: move it down one place.
+  await blocks.first().focus()
+  await page.keyboard.press('Alt+ArrowDown')
+  await expect(blocks.nth(1)).toHaveAttribute('aria-label', /^2\. Footnote: Reference/)
+
+  // Unknown placeholders are refused on save.
+  await text.fill('Salary: {{salary}}')
+  await expect(page.locator('#ed-warning')).toContainText('{{salary}}')
+  await page.getByRole('button', { name: 'Save template' }).click()
+  await expect(page.getByRole('alert')).toContainText('Unknown placeholder')
+  // The page keeps the unsaved layout; select the footnote again and fix it.
+  await page.locator('#ed-paper .ed-block').nth(1).click()
+  await page.locator('#ed-inspector textarea[data-key="text"]').fill('Reference: {{employeeId}}')
+  await page.getByRole('button', { name: 'Save template' }).click()
+  await expect(page.getByText('Template saved.')).toBeVisible()
+  await expect(page.locator('#ed-paper .ed-block').nth(1)).toContainText('Reference: EMP-0001')
+
+  // Issue a certificate with a live preview.
+  await page.goto('/certificates/new')
+  await page.locator('[data-filter-for="employee"]').fill('Erlinda')
+  await page.selectOption('#employee', { label: (await page.locator('#employee option:not([hidden])').first().textContent())! })
+  await page.locator('input[name="template"]').first().check()
+  await page.fill('#purpose', 'housing loan application')
+  await expect(page.locator('[data-preview-paper]')).toContainText('housing loan application')
+  await page.getByRole('button', { name: 'Issue certificate' }).click()
+  await page.waitForURL(/\/certificates\/\d+$/)
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(/^COE-\d{4}-0001$/)
+  await expect(page.locator('.cert-paper')).toContainText('ERLINDA')
+  await expect(page.locator('.cert-paper')).toContainText('housing loan application')
+
+  const url = page.url()
+  const pdf = await page.request.get(`${url}/pdf`)
+  expect(pdf.headers()['content-type']).toBe('application/pdf')
+  expect((await pdf.body()).subarray(0, 5).toString()).toBe('%PDF-')
+  const print = await page.request.get(`${url}/print`)
+  expect(await print.text()).toContain('Print / Save as PDF')
+
+  // Void with a reason; it then prints with a VOID mark and shows on the employee profile.
+  await page.locator('summary', { hasText: 'Void this certificate' }).click()
+  await page.fill('#reason', 'Wrong purpose')
+  page.once('dialog', (d) => d.accept())
+  await page.getByRole('button', { name: 'Void certificate' }).click()
+  await expect(page.getByText('Certificate voided.')).toBeVisible()
+  await expect(page.locator('.cert-void')).toBeVisible()
+  await page.goto('/certificates?status=Void')
+  await expect(page.locator('tbody tr')).toHaveCount(1)
+})
+
 test('app shell: collapsible sidebar, right side, compact header, account menu and log out', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', (e) => errors.push(e.message))
@@ -396,11 +469,14 @@ test('pages fit a phone screen without sideways scrolling', async ({ browser }) 
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } })
   const page = await ctx.newPage()
   await login(page, ADMIN)
-  for (const path of ['/', '/?period=90d', '/employees', '/onboarding', '/leave', '/branches', '/requirements', '/payroll', '/messages', '/messages/new', '/data', '/audit', '/settings', '/users', '/profile', '/login']) {
+  for (const path of ['/', '/?period=90d', '/employees', '/onboarding', '/leave', '/branches', '/requirements', '/payroll', '/messages', '/messages/new', '/data', '/audit', '/settings', '/users', '/profile', '/certificates', '/certificates/new', '/certificates/templates', '/login']) {
     await page.goto(path)
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
     expect(overflow, `${path} overflows by ${overflow}px`).toBeLessThanOrEqual(1)
   }
+  await page.goto('/certificates/templates')
+  await page.getByRole('link', { name: 'Edit layout' }).first().click()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth), 'template editor overflows').toBeLessThanOrEqual(1)
   // The menu becomes a drawer that closes with Escape; the account menu stays reachable.
   await page.goto('/')
   await page.getByRole('button', { name: 'Open menu' }).click()

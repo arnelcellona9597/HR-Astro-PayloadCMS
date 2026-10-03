@@ -1,0 +1,89 @@
+---
+import type { CertificateContent } from '@hr/cms/server/certificates'
+import { formatDate } from '@hr/shared'
+
+import CertificateSheet from '../../../components/certificates/CertificateSheet.astro'
+import Icon from '../../../components/Icon.astro'
+import App from '../../../layouts/App.astro'
+import { errorMessage } from '../../../lib/errors'
+import { setFlash } from '../../../lib/flash'
+import { relId } from '../../../lib/format'
+
+const { payload, user } = Astro.locals
+const id = Number(Astro.params.id)
+if (!Number.isInteger(id) || id <= 0) return new Response(null, { status: 404 })
+
+let error = ''
+if (Astro.request.method === 'POST') {
+  const fd = await Astro.request.formData()
+  try {
+    if (fd.get('action') === 'void') {
+      await payload.update({ collection: 'certificates', id, data: { status: 'Void', voidReason: String(fd.get('reason') ?? '').trim().slice(0, 300) }, user, overrideAccess: false })
+      setFlash(Astro.cookies, { type: 'success', message: 'Certificate voided. It now prints with a VOID mark.' })
+      return Astro.redirect(`/certificates/${id}`)
+    }
+  } catch (err) {
+    error = errorMessage(err)
+    Astro.response.status = 400
+  }
+}
+
+const cert = await payload.findByID({ collection: 'certificates', id, depth: 0, user, overrideAccess: false, disableErrors: true })
+if (!cert) return new Response(null, { status: 404 })
+const content = cert.content as CertificateContent
+const isVoid = cert.status === 'Void'
+const employeeId = relId(cert.employee)
+const templateId = relId(cert.template)
+---
+<App title={`Certificate ${cert.controlNumber}`} heading={cert.controlNumber ?? 'Certificate'} back={{ href: '/certificates', label: 'Certificates' }} description={`${cert.templateName} · ${cert.employeeName}`}>
+  <Fragment slot="actions">
+    <a class="btn-secondary" href={`/certificates/${id}/pdf`} download><Icon name="download" /> Download PDF</a>
+    <a class="btn-primary" href={`/certificates/${id}/print`} target="_blank" rel="noopener"><Icon name="printer" /> Print</a>
+  </Fragment>
+  {
+    error && (
+      <div class="mb-4 flex items-start gap-3 rounded-xl border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">
+        <Icon name="alert" class="mt-0.5 size-4 shrink-0" />
+        <span>{error}</span>
+      </div>
+    )
+  }
+  <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
+    <div class="min-w-0 rounded-xl border border-line bg-surface-2 p-3 sm:p-6">
+      <CertificateSheet {...content} void={isVoid} />
+    </div>
+    <aside class="space-y-4">
+      <section class="card p-5">
+        <h2 class="text-sm font-semibold">Details</h2>
+        <dl class="mt-3 space-y-2.5 text-sm">
+          <div><dt class="text-xs text-muted">Status</dt><dd><span class={isVoid ? 'badge-danger' : 'badge-success'}>{cert.status}</span></dd></div>
+          <div><dt class="text-xs text-muted">Employee</dt><dd>{employeeId ? <a class="text-primary-ink hover:underline" href={`/employees/${employeeId}`}>{cert.employeeName}</a> : cert.employeeName}</dd></div>
+          <div><dt class="text-xs text-muted">Certificate</dt><dd>{cert.templateName}</dd></div>
+          <div><dt class="text-xs text-muted">Purpose</dt><dd>{cert.purpose || 'Whatever legal purpose it may serve'}</dd></div>
+          <div><dt class="text-xs text-muted">Date issued</dt><dd>{formatDate(cert.issuedDate)}</dd></div>
+          <div><dt class="text-xs text-muted">Issued by</dt><dd>{cert.issuedByName}</dd></div>
+          {isVoid && (
+            <div><dt class="text-xs text-muted">Voided</dt><dd>{cert.voidedAt ? new Date(cert.voidedAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) : ''} — {cert.voidReason}</dd></div>
+          )}
+        </dl>
+      </section>
+      <section class="card space-y-2 p-5">
+        <h2 class="text-sm font-semibold">Actions</h2>
+        <a class="btn-secondary w-full" href={`/certificates/new?employee=${employeeId ?? ''}&template=${templateId ?? ''}`}><Icon name="copy" /> Issue another like this</a>
+        {
+          !isVoid && (
+            <details class="rounded-lg border border-line p-3">
+              <summary class="cursor-pointer text-sm font-medium text-danger">Void this certificate</summary>
+              <form method="post" class="mt-3 space-y-2" data-confirm="Void this certificate? It will print with a VOID mark and cannot be made valid again.">
+                <input type="hidden" name="action" value="void" />
+                <label class="label" for="reason">Reason</label>
+                <input class="input" id="reason" name="reason" required maxlength="300" placeholder="e.g. wrong purpose, reissued" />
+                <button class="btn-danger w-full"><Icon name="ban" /> Void certificate</button>
+              </form>
+            </details>
+          )
+        }
+      </section>
+    </aside>
+  </div>
+</App>

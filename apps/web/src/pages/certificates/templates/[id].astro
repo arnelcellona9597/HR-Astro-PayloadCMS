@@ -1,0 +1,679 @@
+---
+// Drag-and-drop certificate template editor: a palette of blocks, the page (drag to reorder, click to
+// select) and a property panel. The layout is saved as JSON and validated on the server.
+import { BLOCK_TYPES, CERT_FIELDS, certificateCss, PAPER_SIZES, sanitizeBlocks, type CertBlock } from '@hr/shared/certificates'
+
+import Icon from '../../../components/Icon.astro'
+import App from '../../../layouts/App.astro'
+import { errorMessage } from '../../../lib/errors'
+import { setFlash } from '../../../lib/flash'
+
+const { payload, user, settings } = Astro.locals
+const id = Number(Astro.params.id)
+if (!Number.isInteger(id) || id <= 0) return new Response(null, { status: 404 })
+const doc = await payload.findByID({ collection: 'certificate-templates', id, depth: 0, user, overrideAccess: false, disableErrors: true })
+if (!doc) return new Response(null, { status: 404 })
+
+let error = ''
+let form = {
+  name: doc.name,
+  description: doc.description ?? '',
+  prefix: doc.prefix,
+  paperSize: doc.paperSize ?? 'A4',
+  font: doc.font ?? 'serif',
+  margin: doc.margin ?? 'normal',
+  active: doc.active !== false,
+  blocks: sanitizeBlocks(doc.blocks) as CertBlock[],
+}
+if (Astro.request.method === 'POST') {
+  const fd = await Astro.request.formData()
+  let posted: unknown = []
+  try {
+    posted = JSON.parse(String(fd.get('blocks') ?? '[]'))
+  } catch {
+    /* validated below */
+  }
+  form = {
+    name: String(fd.get('name') ?? '').trim(),
+    description: String(fd.get('description') ?? '').trim(),
+    prefix: String(fd.get('prefix') ?? '').trim().toUpperCase(),
+    paperSize: String(fd.get('paperSize') ?? 'A4') as never,
+    font: String(fd.get('font') ?? 'serif') as never,
+    margin: String(fd.get('margin') ?? 'normal') as never,
+    active: fd.get('active') === 'on',
+    blocks: Array.isArray(posted) ? (posted as CertBlock[]) : form.blocks,
+  }
+  try {
+    await payload.update({
+      collection: 'certificate-templates',
+      id,
+      data: { name: form.name, description: form.description, prefix: form.prefix, paperSize: form.paperSize, font: form.font, margin: form.margin, active: form.active, blocks: form.blocks } as never,
+      user,
+      overrideAccess: false,
+    })
+    setFlash(Astro.cookies, { type: 'success', message: 'Template saved. New certificates will use this layout; issued ones keep theirs.' })
+    return Astro.redirect(`/certificates/templates/${id}`)
+  } catch (err) {
+    error = errorMessage(err)
+    Astro.response.status = 400
+  }
+}
+
+const logo = settings?.logo && typeof settings.logo === 'object' ? `/files/${settings.logo.id}` : null
+// Embedded as JSON (with "<" escaped) for the editor script.
+const data = JSON.stringify({
+  blocks: form.blocks,
+  companyName: settings?.companyName ?? 'HR Management System',
+  logoUrl: logo,
+}).replace(/</g, '\\u003c')
+const issued = (await payload.count({ collection: 'certificates', where: { template: { equals: id } }, overrideAccess: true })).totalDocs
+---
+<App title={`Edit template — ${doc.name}`} heading="Edit certificate template" back={{ href: '/certificates/templates', label: 'Certificate templates' }}>
+  <Fragment set:html={`<style>${certificateCss()}</style>`} />
+  <Fragment set:html={`<script type="application/json" id="editor-data">${data}</script>`} />
+  {
+    error && (
+      <div class="mb-4 flex items-start gap-3 rounded-xl border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">
+        <Icon name="alert" class="mt-0.5 size-4 shrink-0" />
+        <span>{error}</span>
+      </div>
+    )
+  }
+  <form method="post" id="tpl-form" data-dirty-guard>
+    <input type="hidden" name="blocks" id="blocks-input" />
+    <section class="card mb-4 p-4 sm:p-5">
+      <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-[minmax(0,2fr)_8rem_minmax(0,2fr)]">
+        <div>
+          <label class="label" for="name">Purpose / template name</label>
+          <input class="input" id="name" name="name" required maxlength="120" value={form.name} />
+        </div>
+        <div>
+          <label class="label" for="prefix">No. prefix</label>
+          <input class="input uppercase" id="prefix" name="prefix" required maxlength="8" pattern="[A-Za-z0-9]{1,8}" value={form.prefix} title="1–8 letters or digits" />
+        </div>
+        <div>
+          <label class="label" for="description">When to use it</label>
+          <input class="input" id="description" name="description" maxlength="400" value={form.description} />
+        </div>
+      </div>
+      <div class="mt-4 flex flex-wrap items-end gap-3">
+        <div>
+          <label class="label" for="paperSize">Paper</label>
+          <select class="input" id="paperSize" name="paperSize" data-page-opt>{PAPER_SIZES.map((p) => <option selected={p === form.paperSize}>{p}</option>)}</select>
+        </div>
+        <div>
+          <label class="label" for="font">Font</label>
+          <select class="input" id="font" name="font" data-page-opt>
+            <option value="serif" selected={form.font === 'serif'}>Serif (Times)</option>
+            <option value="sans" selected={form.font === 'sans'}>Sans-serif</option>
+          </select>
+        </div>
+        <div>
+          <label class="label" for="margin">Margins</label>
+          <select class="input" id="margin" name="margin" data-page-opt>
+            {['narrow', 'normal', 'wide'].map((m) => <option value={m} selected={m === form.margin}>{m[0]!.toUpperCase() + m.slice(1)}</option>)}
+          </select>
+        </div>
+        <label class="mb-2 flex items-center gap-2 text-sm"><input type="checkbox" name="active" checked={form.active} class="size-4 accent-[var(--primary)]" /> Active</label>
+        <div class="ml-auto flex items-center gap-2">
+          {issued > 0 && <span class="text-xs text-muted">{issued} issued — they keep their original text</span>}
+          <button class="btn-primary"><Icon name="check" /> Save template</button>
+        </div>
+      </div>
+    </section>
+  </form>
+
+  <div class="grid gap-4 xl:grid-cols-[13rem_minmax(0,1fr)_20rem]">
+    <!-- Palette -->
+    <section class="card min-w-0 p-3 xl:self-start xl:sticky xl:top-[calc(var(--topbar-h)+1rem)]" aria-labelledby="palette-title">
+      <h2 id="palette-title" class="eyebrow px-1 pb-2 pt-1">Blocks</h2>
+      <p class="px-1 pb-2 text-xs text-muted">Drag onto the page, or click to add below the selected block.</p>
+      <ul class="flex gap-2 overflow-x-auto pb-1 xl:flex-col xl:overflow-visible">
+        {
+          BLOCK_TYPES.map((t) => (
+            <li class="shrink-0">
+              <button type="button" class="ed-palette flex w-full items-center gap-2.5 rounded-lg border border-line bg-surface px-3 py-2 text-left text-sm transition-colors hover:border-line-strong hover:bg-surface-2" data-palette-type={t.type} title={t.description}>
+                <Icon name={t.icon as never} class="size-4 shrink-0 text-muted" />
+                <span class="whitespace-nowrap">{t.label}</span>
+              </button>
+            </li>
+          ))
+        }
+      </ul>
+    </section>
+
+    <!-- Page -->
+    <section class="min-w-0" aria-labelledby="page-title">
+      <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h2 id="page-title" class="text-sm font-semibold">Page</h2>
+        <div class="flex items-center gap-1 rounded-lg border border-line bg-surface p-0.5 text-xs" role="radiogroup" aria-label="Show">
+          <button type="button" class="ed-mode rounded-md px-2.5 py-1" data-mode="sample" role="radio" aria-checked="true">Sample data</button>
+          <button type="button" class="ed-mode rounded-md px-2.5 py-1" data-mode="placeholders" role="radio" aria-checked="false">Placeholders</button>
+        </div>
+      </div>
+      <div class="rounded-xl border border-line bg-surface-2 p-3 sm:p-6" id="ed-box">
+        <div id="ed-scale" class="mx-auto">
+          <div id="ed-paper" class="relative bg-white text-[#111] shadow-elev-2" role="list" aria-label="Certificate blocks"></div>
+        </div>
+      </div>
+      <p class="mt-2 text-xs text-muted" id="ed-warning" aria-live="polite"></p>
+      <p class="sr-only" id="ed-announce" aria-live="polite"></p>
+    </section>
+
+    <!-- Inspector -->
+    <section class="card min-w-0 p-4 xl:self-start xl:sticky xl:top-[calc(var(--topbar-h)+1rem)]" aria-labelledby="inspector-title">
+      <h2 id="inspector-title" class="text-sm font-semibold">Block settings</h2>
+      <div id="ed-inspector" class="mt-3"></div>
+      <details class="mt-4 border-t border-line pt-3" open>
+        <summary class="cursor-pointer text-xs font-semibold text-muted">Placeholders</summary>
+        <p class="mt-2 text-xs text-muted">Click to insert into the text you are editing. Use **double asterisks** for bold.</p>
+        <div class="mt-2 flex flex-wrap gap-1.5" id="ed-chips">
+          {CERT_FIELDS.map((f) => <button type="button" class="ed-chip rounded-md border border-line bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-fg-2 hover:border-primary-ink hover:text-primary-ink" data-ph={f.name} title={f.label}>{`{{${f.name}}}`}</button>)}
+        </div>
+      </details>
+    </section>
+  </div>
+</App>
+
+<style is:global>
+  #ed-paper .ed-block {
+    position: relative;
+    border-radius: 3px;
+    outline: 1px dashed transparent;
+    outline-offset: 3px;
+    cursor: pointer;
+    transition: outline-color 120ms ease, background-color 120ms ease;
+  }
+  #ed-paper .ed-block:hover {
+    outline-color: #b9c4d3;
+  }
+  #ed-paper .ed-block[aria-current='true'] {
+    outline: 2px solid var(--brand-primary);
+    background: rgb(0 83 155 / 0.03);
+  }
+  #ed-paper .ed-block:focus-visible {
+    outline: 2px solid var(--brand-primary);
+  }
+  #ed-paper .ed-tools {
+    position: absolute;
+    top: -32px;
+    right: -4px;
+    z-index: 5;
+    display: none;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgb(15 20 28 / 0.18);
+    font-family: var(--font-sans);
+  }
+  #ed-paper .ed-block:hover .ed-tools,
+  #ed-paper .ed-block[aria-current='true'] .ed-tools,
+  #ed-paper .ed-block:focus-within .ed-tools {
+    display: flex;
+  }
+  #ed-paper .ed-tools button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    color: #454d5c;
+  }
+  #ed-paper .ed-tools button:hover {
+    background: #f0f2f5;
+    color: #0f141c;
+  }
+  #ed-paper .ed-tools [data-drag] {
+    cursor: grab;
+    touch-action: none;
+  }
+  #ed-paper .ed-tools svg {
+    width: 15px;
+    height: 15px;
+  }
+  #ed-paper .ed-empty {
+    font-family: var(--font-sans);
+    font-size: 12px;
+    color: #8d95a3;
+    text-align: center;
+    padding: 4px;
+  }
+  #ed-paper .ed-divider-hint {
+    font-family: var(--font-sans);
+  }
+  .ed-palette {
+    touch-action: none;
+    cursor: grab;
+  }
+  .ed-mode[aria-checked='true'] {
+    background: var(--primary-soft);
+    color: var(--primary-ink);
+    font-weight: 600;
+  }
+  #ed-indicator {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 3px;
+    border-radius: 3px;
+    background: var(--brand-primary);
+    box-shadow: 0 0 0 3px rgb(0 83 155 / 0.15);
+    pointer-events: none;
+    z-index: 6;
+  }
+  #ed-ghost {
+    position: fixed;
+    z-index: 80;
+    pointer-events: none;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--fg);
+    border: 1px solid var(--border-strong);
+    box-shadow: var(--elev-pop);
+    font-size: 13px;
+    font-weight: 500;
+    transform: translate(12px, 8px);
+  }
+  body.ed-dragging,
+  body.ed-dragging * {
+    cursor: grabbing !important;
+    user-select: none;
+  }
+</style>
+
+<script>
+  import { BLOCK_TYPES, CERT_FIELDS, type CertBlock, MARGIN_POINTS, newBlock, renderBlockHtml, SAMPLE_VALUES, unknownCertPlaceholders } from '@hr/shared/certificates'
+
+  type State = { blocks: CertBlock[]; selected: string | null; mode: 'sample' | 'placeholders' }
+  const data = JSON.parse(document.getElementById('editor-data')!.textContent!) as { blocks: CertBlock[]; companyName: string; logoUrl: string | null }
+  const state: State = { blocks: data.blocks, selected: data.blocks[0]?.id ?? null, mode: 'sample' }
+
+  const form = document.getElementById('tpl-form') as HTMLFormElement
+  const paper = document.getElementById('ed-paper')!
+  const scaleBox = document.getElementById('ed-scale')!
+  const box = document.getElementById('ed-box')!
+  const inspector = document.getElementById('ed-inspector')!
+  const warning = document.getElementById('ed-warning')!
+  const announce = (msg: string) => (document.getElementById('ed-announce')!.textContent = msg)
+  const SIZES: Record<string, [number, number]> = { A4: [794, 1123], Letter: [816, 1056], Legal: [816, 1344] }
+  const ICON = {
+    grip: 'M9 5h.01M9 12h.01M9 19h.01M15 5h.01M15 12h.01M15 19h.01',
+    up: 'M12 19V5M5 12l7-7 7 7',
+    down: 'M12 5v14M19 12l-7 7-7-7',
+    copy: 'M9 9h11a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2zM5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1',
+    trash: 'M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6',
+  }
+  const svg = (d: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`
+  const labelOf = (b: CertBlock) => BLOCK_TYPES.find((t) => t.type === b.type)?.label ?? b.type
+  const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
+  // Marks the form as changed for the layout's "unsaved changes" guard.
+  const touch = () => form.dispatchEvent(new Event('input', { bubbles: true }))
+
+  const opt = (name: string) => (form.elements.namedItem(name) as HTMLSelectElement).value
+
+  // ---------- Page rendering ----------
+  function summary(b: CertBlock): string {
+    const t = 'text' in b ? b.text : b.type === 'signatory' ? b.signers.map((s) => s.name || s.title).join(', ') : ''
+    return `${labelOf(b)}${t ? `: ${t.replace(/\*\*/g, '').slice(0, 60)}` : ''}`
+  }
+  function renderPage() {
+    const [w, h] = SIZES[opt('paperSize')] ?? SIZES.A4!
+    paper.style.width = `${w}px`
+    paper.style.minHeight = `${h}px`
+    paper.style.padding = `${MARGIN_POINTS[opt('margin') as 'normal'] ?? 72}pt`
+    const o = {
+      values: { ...SAMPLE_VALUES, companyName: data.companyName },
+      showPlaceholders: state.mode === 'placeholders',
+      companyName: data.companyName,
+      logoUrl: data.logoUrl,
+      font: opt('font') as 'serif',
+    }
+    const items = state.blocks
+      .map((b, i) => {
+        let inner = renderBlockHtml(b, o)
+        if (b.type === 'spacer') inner = `<div class="ed-empty" style="height:100%">${inner}</div>`
+        if (b.type === 'details' && !b.fields.length) inner = '<div class="ed-empty">Details table: choose fields →</div>'
+        return `<div class="ed-block" role="listitem" tabindex="0" data-id="${b.id}" aria-label="${esc(`${i + 1}. ${summary(b)}`)}"${b.id === state.selected ? ' aria-current="true"' : ''}>
+          <div class="ed-tools">
+            <button type="button" data-drag title="Drag to move" aria-label="Drag to move">${svg(ICON.grip)}</button>
+            <button type="button" data-act="up" title="Move up" aria-label="Move up">${svg(ICON.up)}</button>
+            <button type="button" data-act="down" title="Move down" aria-label="Move down">${svg(ICON.down)}</button>
+            <button type="button" data-act="copy" title="Duplicate" aria-label="Duplicate">${svg(ICON.copy)}</button>
+            <button type="button" data-act="delete" title="Delete" aria-label="Delete">${svg(ICON.trash)}</button>
+          </div>${inner}</div>`
+      })
+      .join('')
+    paper.innerHTML = `<div class="cert cert-${o.font}">${items || '<div class="ed-empty" style="padding:48px">Drag blocks here from the palette.</div>'}</div>`
+    const bad = unknownCertPlaceholders(state.blocks)
+    warning.textContent = bad.length ? `Unknown placeholder(s): ${bad.map((b) => `{{${b}}}`).join(', ')} — they will be refused when saving.` : ''
+    warning.classList.toggle('text-danger', bad.length > 0)
+    fit()
+  }
+  function fit() {
+    const w = parseFloat(paper.style.width) || 794
+    const scale = Math.min(1, (box.clientWidth - 24) / w)
+    paper.style.transform = `scale(${scale})`
+    paper.style.transformOrigin = 'top left'
+    scaleBox.style.width = `${w * scale}px`
+    scaleBox.style.height = `${paper.offsetHeight * scale}px`
+  }
+  let raf = 0
+  const renderSoon = () => {
+    cancelAnimationFrame(raf)
+    raf = requestAnimationFrame(renderPage)
+  }
+
+  // ---------- Inspector ----------
+  const selectedBlock = () => state.blocks.find((b) => b.id === state.selected) ?? null
+  let lastField: HTMLInputElement | HTMLTextAreaElement | null = null
+
+  const field = (label: string, control: string, help = '') =>
+    `<div class="mb-3"><label class="label text-xs">${label}${control}</label>${help ? `<p class="field-help">${help}</p>` : ''}</div>`
+  const select = (key: string, value: string, options: [string, string][]) =>
+    `<select class="input mt-1" data-key="${key}">${options.map(([v, l]) => `<option value="${v}"${v === value ? ' selected' : ''}>${l}</option>`).join('')}</select>`
+  const input = (key: string, value: string, placeholder = '') => `<input class="input mt-1" data-key="${key}" value="${esc(value)}" placeholder="${esc(placeholder)}">`
+  const area = (key: string, value: string, rows = 5) => `<textarea class="input mt-1 font-[inherit]" rows="${rows}" data-key="${key}">${esc(value)}</textarea>`
+  const check = (key: string, checked: boolean, label: string) =>
+    `<label class="mb-3 flex items-center gap-2 text-sm"><input type="checkbox" class="size-4 accent-[var(--primary)]" data-key="${key}"${checked ? ' checked' : ''}> ${label}</label>`
+  const ALIGN3: [string, string][] = [['left', 'Left'], ['center', 'Center'], ['right', 'Right']]
+  const ALIGN4: [string, string][] = [...ALIGN3, ['justify', 'Justified']]
+
+  function renderInspector() {
+    const b = selectedBlock()
+    lastField = null
+    if (!b) {
+      inspector.innerHTML = '<p class="text-sm text-muted">Select a block on the page to edit it, or add one from the palette.</p>'
+      return
+    }
+    let html = `<p class="mb-3 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted"><span>${esc(labelOf(b))}</span><span class="font-normal normal-case">${state.blocks.indexOf(b) + 1} of ${state.blocks.length}</span></p>`
+    switch (b.type) {
+      case 'header':
+        html += check('showLogo', b.showLogo, 'Show logo (from Branding)')
+        html += field('Company name', input('companyName', b.companyName, data.companyName), 'Leave blank to use the name from Branding.')
+        html += field('Address / contact lines', area('lines', b.lines, 3))
+        html += field('Layout', select('align', b.align, [['center', 'Centered'], ['left', 'Logo on the left']]))
+        break
+      case 'title':
+        html += field('Title', input('text', b.text))
+        html += field('Size', select('size', b.size, [['md', 'Medium'], ['lg', 'Large'], ['xl', 'Extra large']]))
+        html += field('Alignment', select('align', b.align, [['center', 'Center'], ['left', 'Left']]))
+        html += check('wide', b.wide, 'Wide letter spacing')
+        break
+      case 'paragraph':
+        html += field('Text', area('text', b.text, 7), 'Placeholders like {{fullName}} are filled in when issued. **bold**')
+        html += field('Alignment', select('align', b.align, ALIGN4))
+        html += field('Text size', select('size', b.size, [['sm', 'Small'], ['md', 'Normal'], ['lg', 'Large']]))
+        html += check('indent', b.indent, 'Indent the first line')
+        break
+      case 'footer':
+        html += field('Text', area('text', b.text, 3))
+        html += field('Alignment', select('align', b.align, ALIGN3))
+        break
+      case 'spacer':
+        html += field('Height', select('size', b.size, [['sm', 'Small'], ['md', 'Medium'], ['lg', 'Large'], ['xl', 'Extra large']]))
+        break
+      case 'divider':
+        html += '<p class="text-sm text-muted">A thin line across the page.</p>'
+        break
+      case 'details':
+        html += '<p class="mb-2 text-xs text-muted">Rows shown as “Label: value”.</p>'
+        html += CERT_FIELDS.filter((f) => !['fullNameUpper', 'honorific', 'pronoun', 'pronounCap', 'possessive', 'separation'].includes(f.name))
+          .map((f) => `<label class="flex items-center gap-2 py-0.5 text-sm"><input type="checkbox" class="size-4 accent-[var(--primary)]" data-field="${f.name}"${b.fields.includes(f.name) ? ' checked' : ''}> ${esc(f.label)}</label>`)
+          .join('')
+        break
+      case 'signatory':
+        html += field('Alignment', select('align', b.align, ALIGN3))
+        b.signers.forEach((s, i) => {
+          html += `<fieldset class="mb-3 rounded-lg border border-line p-3"><legend class="px-1 text-xs font-semibold text-muted">Signatory ${i + 1}</legend>
+            ${field('Label (optional)', `<input class="input mt-1" data-signer="${i}" data-skey="label" value="${esc(s.label)}" placeholder="e.g. Certified by:">`)}
+            ${field('Name', `<input class="input mt-1" data-signer="${i}" data-skey="name" value="${esc(s.name)}" placeholder="Leave blank to sign by hand">`)}
+            ${field('Title', `<input class="input mt-1" data-signer="${i}" data-skey="title" value="${esc(s.title)}">`)}
+            ${b.signers.length > 1 ? `<button type="button" class="btn-ghost btn-sm text-danger" data-remove-signer="${i}">Remove</button>` : ''}
+          </fieldset>`
+        })
+        if (b.signers.length < 3) html += '<button type="button" class="btn-secondary btn-sm" data-add-signer>Add signatory</button>'
+        break
+    }
+    inspector.innerHTML = html
+  }
+
+  inspector.addEventListener('focusin', (e) => {
+    const t = e.target as HTMLElement
+    if (t.matches('input:not([type=checkbox]), textarea')) lastField = t as HTMLInputElement
+  })
+  inspector.addEventListener('input', (e) => {
+    const t = e.target as HTMLInputElement
+    const b = selectedBlock() as Record<string, unknown> | null
+    if (!b) return
+    if (t.dataset.key) b[t.dataset.key] = t.type === 'checkbox' ? t.checked : t.value
+    else if (t.dataset.signer) (b.signers as Record<string, string>[])[Number(t.dataset.signer)]![t.dataset.skey!] = t.value
+    else if (t.dataset.field) {
+      const chosen = new Set([...inspector.querySelectorAll<HTMLInputElement>('[data-field]:checked')].map((c) => c.dataset.field!))
+      b.fields = CERT_FIELDS.map((f) => f.name).filter((n) => chosen.has(n))
+    }
+    touch()
+    renderSoon()
+  })
+  inspector.addEventListener('click', (e) => {
+    const t = (e.target as HTMLElement).closest('button')
+    const b = selectedBlock()
+    if (!t || !b || b.type !== 'signatory') return
+    if (t.hasAttribute('data-add-signer')) b.signers.push({ label: '', name: '', title: '' })
+    else if (t.dataset.removeSigner) b.signers.splice(Number(t.dataset.removeSigner), 1)
+    else return
+    touch()
+    renderInspector()
+    renderPage()
+  })
+
+  // Placeholder chips insert at the cursor of the last edited text field.
+  document.getElementById('ed-chips')!.addEventListener('click', (e) => {
+    const chip = (e.target as HTMLElement).closest<HTMLElement>('[data-ph]')
+    if (!chip) return
+    const target = lastField ?? inspector.querySelector<HTMLTextAreaElement>('textarea, input[data-key="text"]')
+    if (!target) {
+      announce('Select a text block first.')
+      return
+    }
+    const token = `{{${chip.dataset.ph}}}`
+    const start = target.selectionStart ?? target.value.length
+    const end = target.selectionEnd ?? start
+    target.value = target.value.slice(0, start) + token + target.value.slice(end)
+    target.focus()
+    target.setSelectionRange(start + token.length, start + token.length)
+    target.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+
+  // ---------- Selection & block actions ----------
+  const select_ = (id: string | null, focus = false) => {
+    state.selected = id
+    renderPage()
+    renderInspector()
+    if (focus && id) paper.querySelector<HTMLElement>(`[data-id="${id}"]`)?.focus()
+  }
+  const move = (from: number, to: number) => {
+    if (to < 0 || to >= state.blocks.length || from === to) return
+    const [b] = state.blocks.splice(from, 1)
+    state.blocks.splice(to, 0, b!)
+    touch()
+    announce(`${labelOf(b!)} moved to position ${to + 1} of ${state.blocks.length}.`)
+  }
+  const insert = (type: CertBlock['type'], at: number) => {
+    if (state.blocks.length >= 40) {
+      announce('A template can have at most 40 blocks.')
+      return
+    }
+    const b = newBlock(type)
+    state.blocks.splice(at, 0, b)
+    touch()
+    announce(`${labelOf(b)} added at position ${at + 1}.`)
+    select_(b.id, true)
+  }
+
+  paper.addEventListener('click', (e) => {
+    const el = (e.target as HTMLElement).closest<HTMLElement>('.ed-block')
+    if (!el) return
+    const i = state.blocks.findIndex((b) => b.id === el.dataset.id)
+    const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act
+    if (act === 'up') move(i, i - 1)
+    else if (act === 'down') move(i, i + 1)
+    else if (act === 'copy') {
+      const copy = { ...structuredClone(state.blocks[i]!), id: Math.random().toString(36).slice(2, 10) }
+      state.blocks.splice(i + 1, 0, copy)
+      touch()
+      return select_(copy.id, true)
+    } else if (act === 'delete') {
+      const [gone] = state.blocks.splice(i, 1)
+      touch()
+      announce(`${labelOf(gone!)} deleted.`)
+      return select_(state.blocks[Math.min(i, state.blocks.length - 1)]?.id ?? null)
+    }
+    select_(el.dataset.id!, Boolean(act))
+  })
+  paper.addEventListener('keydown', (e) => {
+    const el = (e.target as HTMLElement).closest<HTMLElement>('.ed-block')
+    if (!el || e.target !== el) return
+    const i = state.blocks.findIndex((b) => b.id === el.dataset.id)
+    if (e.key === 'Enter' || e.key === ' ') (e.preventDefault(), select_(el.dataset.id!, true))
+    else if (e.altKey && e.key === 'ArrowUp') (e.preventDefault(), move(i, i - 1), select_(el.dataset.id!, true))
+    else if (e.altKey && e.key === 'ArrowDown') (e.preventDefault(), move(i, i + 1), select_(el.dataset.id!, true))
+    else if (e.key === 'ArrowUp') (e.preventDefault(), (el.previousElementSibling as HTMLElement | null)?.focus())
+    else if (e.key === 'ArrowDown') (e.preventDefault(), (el.nextElementSibling as HTMLElement | null)?.focus())
+    else if (e.key === 'Delete') {
+      e.preventDefault()
+      el.querySelector<HTMLElement>('[data-act="delete"]')?.click()
+    }
+  })
+
+  // ---------- Drag and drop (pointer events: mouse, pen and touch) ----------
+  type Drag = { kind: 'move'; id: string } | { kind: 'new'; type: CertBlock['type'] }
+  let drag: Drag | null = null
+  let dropAt: number | null = null
+  let startX = 0
+  let startY = 0
+  let started = false
+  let ghost: HTMLElement | null = null
+  let indicator: HTMLElement | null = null
+
+  const dropIndex = (x: number, y: number): number | null => {
+    const r = paper.getBoundingClientRect()
+    if (x < r.left - 40 || x > r.right + 40 || y < r.top - 40 || y > r.bottom + 40) return null
+    const els = [...paper.querySelectorAll<HTMLElement>('.ed-block')]
+    for (let i = 0; i < els.length; i++) {
+      const b = els[i]!.getBoundingClientRect()
+      if (y < b.top + b.height / 2) return i
+    }
+    return els.length
+  }
+  const showIndicator = (i: number | null) => {
+    if (i === null) return indicator?.remove()
+    if (!indicator) {
+      indicator = document.createElement('div')
+      indicator.id = 'ed-indicator'
+    }
+    const els = [...paper.querySelectorAll<HTMLElement>('.ed-block')]
+    const pr = paper.getBoundingClientRect()
+    const scale = pr.width / paper.offsetWidth || 1
+    const ref = els[i] ?? els[els.length - 1]
+    const top = ref ? (els[i] ? ref.getBoundingClientRect().top - 4 : ref.getBoundingClientRect().bottom + 2) : pr.top + 24
+    indicator.style.top = `${(top - pr.top) / scale}px`
+    paper.appendChild(indicator)
+  }
+  const endDrag = () => {
+    ghost?.remove()
+    indicator?.remove()
+    ghost = null
+    drag = null
+    dropAt = null
+    started = false
+    document.body.classList.remove('ed-dragging')
+  }
+  const begin = (e: PointerEvent, d: Drag, label: string) => {
+    drag = d
+    startX = e.clientX
+    startY = e.clientY
+    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+    ghost = document.createElement('div')
+    ghost.id = 'ed-ghost'
+    ghost.textContent = label
+  }
+  paper.addEventListener('pointerdown', (e) => {
+    const handle = (e.target as HTMLElement).closest('[data-drag]')
+    if (!handle) return
+    const el = handle.closest<HTMLElement>('.ed-block')!
+    e.preventDefault()
+    const b = state.blocks.find((x) => x.id === el.dataset.id)!
+    begin(e, { kind: 'move', id: b.id }, labelOf(b))
+  })
+  document.querySelectorAll<HTMLElement>('[data-palette-type]').forEach((btn) => {
+    btn.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return
+      const t = BLOCK_TYPES.find((x) => x.type === btn.dataset.paletteType)!
+      begin(e, { kind: 'new', type: t.type }, `+ ${t.label}`)
+    })
+    // Click (or keyboard) adds below the selected block.
+    btn.addEventListener('click', () => {
+      if (started) return
+      const sel = state.blocks.findIndex((b) => b.id === state.selected)
+      insert(btn.dataset.paletteType as CertBlock['type'], sel >= 0 ? sel + 1 : state.blocks.length)
+    })
+  })
+  document.addEventListener('pointermove', (e) => {
+    if (!drag) return
+    if (!started && Math.hypot(e.clientX - startX, e.clientY - startY) < 5) return
+    if (!started) {
+      started = true
+      document.body.classList.add('ed-dragging')
+      document.body.appendChild(ghost!)
+    }
+    ghost!.style.left = `${e.clientX}px`
+    ghost!.style.top = `${e.clientY}px`
+    dropAt = dropIndex(e.clientX, e.clientY)
+    showIndicator(dropAt)
+  })
+  document.addEventListener('pointerup', () => {
+    if (!drag) return
+    const d = drag
+    const at = dropAt
+    const wasDrag = started
+    endDrag()
+    if (!wasDrag) return
+    // Swallow the click that follows a drag from the palette.
+    started = true
+    setTimeout(() => (started = false), 0)
+    if (at === null) return
+    if (d.kind === 'new') insert(d.type, at)
+    else {
+      const from = state.blocks.findIndex((b) => b.id === d.id)
+      move(from, at > from ? at - 1 : at)
+      select_(d.id, true)
+    }
+  })
+  document.addEventListener('pointercancel', endDrag)
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && drag) endDrag()
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault()
+      form.requestSubmit()
+    }
+  })
+
+  // ---------- Page options, view mode, save ----------
+  form.querySelectorAll('[data-page-opt]').forEach((el) => el.addEventListener('change', renderPage))
+  document.querySelectorAll<HTMLButtonElement>('.ed-mode').forEach((btn) =>
+    btn.addEventListener('click', () => {
+      state.mode = btn.dataset.mode as State['mode']
+      document.querySelectorAll('.ed-mode').forEach((b) => b.setAttribute('aria-checked', String(b === btn)))
+      renderPage()
+    }),
+  )
+  form.addEventListener('submit', () => {
+    ;(document.getElementById('blocks-input') as HTMLInputElement).value = JSON.stringify(state.blocks)
+  })
+  window.addEventListener('resize', fit)
+  renderPage()
+  renderInspector()
+</script>

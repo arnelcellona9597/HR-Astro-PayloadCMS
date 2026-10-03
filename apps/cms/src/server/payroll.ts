@@ -4,13 +4,13 @@ import fontkit from '@pdf-lib/fontkit'
 import { formatCentavos, formatDate, toCentavos } from '@hr/shared'
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { createLocalReq, type Payload, type PayloadRequest, type Where } from 'payload'
 import { PDFDocument, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
 
 import type { Payslip, PayrollPeriod, PayslipSetting } from '../payload-types'
 import { DEFAULT_DEDUCTIONS, DEFAULT_EARNINGS } from '../globals/PayslipSettings'
 import { UserError } from './errors'
+import { fontPath } from './fonts'
 import { queueMessage, templateByKey } from './mailer'
 
 type User = { id: number; name?: string | null; email?: string | null }
@@ -232,20 +232,6 @@ export async function resendPayslip(payload: Payload, user: User, payslipId: num
 
 // ---------------------------------------------------------------------------------------------
 // PDF
-
-const here = path.dirname(fileURLToPath(import.meta.url))
-function fontPath(file: string): string {
-  // Source tree (dev/tests), bundled builds (cwd = app root) and the release layout.
-  const candidates = [
-    path.resolve(here, '../../assets/fonts', file),
-    path.resolve(process.cwd(), 'assets/fonts', file),
-    path.resolve(process.cwd(), 'apps/cms/assets/fonts', file),
-    path.resolve(process.cwd(), '../cms/assets/fonts', file),
-  ]
-  const found = candidates.find((p) => fs.existsSync(p))
-  if (!found) throw new Error(`Payslip font ${file} not found`)
-  return found
-}
 
 const PAPER: Record<string, [number, number]> = { A4: [595.28, 841.89], Letter: [612, 792], 'Half-Letter': [396, 612] }
 

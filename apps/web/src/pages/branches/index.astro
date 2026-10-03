@@ -2,7 +2,7 @@
 import { branchCounts } from '@hr/cms/server/stats'
 import { CLASSIFICATIONS } from '@hr/shared'
 
-import BarChart from '../../components/charts/BarChart.astro'
+import Chart from '../../components/charts/Chart.astro'
 import EmptyState from '../../components/EmptyState.astro'
 import Icon from '../../components/Icon.astro'
 import App from '../../layouts/App.astro'
@@ -71,7 +71,7 @@ const scopeLabel = scope === 'all' ? 'all employees (any status)' : 'active empl
 
         <div class="mt-6 grid gap-4 xl:grid-cols-3">
           <div class="xl:col-span-2">
-            <BarChart
+            <Chart
               title="Employees per branch"
               subtitle={`By classification — ${scopeLabel}`}
               spec={{

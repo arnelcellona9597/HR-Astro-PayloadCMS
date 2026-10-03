@@ -1,0 +1,93 @@
+---
+// Main navigation. Desktop: sticky, expanded (icon + label) or collapsed (icons + tooltips).
+// Below lg: an off-canvas drawer opened from the topbar. Behaviour lives in App.astro's script.
+import { isActive, type NavGroup } from '../../lib/nav'
+import Icon from '../Icon.astro'
+
+interface Props {
+  groups: NavGroup[]
+  path: string
+  company: string
+  logoId?: number | string | null
+  sessionEnds: string | null
+  sessionExpiresAt?: number
+  showPayloadAdmin: boolean
+}
+const { groups, path, company, logoId, sessionEnds, sessionExpiresAt, showPayloadAdmin } = Astro.props
+---
+<aside id="sidebar" class="flex flex-col bg-surface" aria-label="Sidebar" data-open="false">
+  <div class="sidebar-brand flex shrink-0 items-center gap-3 border-b border-line px-4" style="height: var(--topbar-h)">
+    <a href="/" class="flex min-w-0 flex-1 items-center gap-3 rounded-lg" data-tip={company}>
+      {
+        logoId ? (
+          <img src={`/files/${logoId}`} alt="" class="size-9 shrink-0 rounded-lg object-contain" />
+        ) : (
+          <span class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-sm font-bold tracking-tight text-on-primary shadow-elev-1">
+            {company.slice(0, 2).toUpperCase()}
+          </span>
+        )
+      }
+      <span class="sidebar-label min-w-0">
+        <span class="block truncate text-sm font-semibold leading-tight">{company}</span>
+        <span class="block truncate text-xs text-muted">Human Resource Management</span>
+      </span>
+    </a>
+    <button type="button" class="btn-icon shrink-0 lg:hidden" data-sidebar-close aria-label="Close menu">
+      <Icon name="x" class="size-5" />
+    </button>
+  </div>
+
+  <nav class="scroll-thin flex-1 overflow-y-auto overflow-x-hidden px-3 py-4" aria-label="Main">
+    {
+      groups.map((group, gi) =>
+        group.items.length ? (
+          <div class:list={[gi > 0 && 'mt-6']}>
+            <p class="sidebar-heading mb-2 flex items-center px-3" role="presentation">
+              <span class="eyebrow">{group.label}</span>
+            </p>
+            <ul class="space-y-0.5">
+              {group.items.map((item) => (
+                <li>
+                  <a href={item.href} class="nav-link" data-tip={item.label} aria-current={isActive(item.href, path) ? 'page' : undefined}>
+                    <Icon name={item.icon as never} class="size-[18px] shrink-0" />
+                    <span class="sidebar-label truncate">{item.label}</span>
+                  </a>
+                </li>
+              ))}
+              {gi === groups.length - 1 && showPayloadAdmin && (
+                <li>
+                  <a href="/admin" class="nav-link" data-tip="Payload Admin">
+                    <Icon name="external" class="size-[18px] shrink-0" />
+                    <span class="sidebar-label truncate">Payload Admin</span>
+                  </a>
+                </li>
+              )}
+            </ul>
+          </div>
+        ) : null,
+      )
+    }
+  </nav>
+
+  <div class="shrink-0 space-y-1 border-t border-line p-3">
+    {
+      sessionEnds && (
+        <p
+          class="side-row flex h-8 items-center gap-2 rounded-lg px-3 text-xs text-muted"
+          data-session-expires={sessionExpiresAt}
+          data-tip={`Signed in until ${sessionEnds}`}
+          title="Sessions last 12 hours"
+        >
+          <Icon name="clock" class="size-4 shrink-0" />
+          <span class="sidebar-label">Signed in until {sessionEnds}</span>
+        </p>
+      )
+    }
+    <button type="button" class="nav-link hidden w-full lg:flex" data-sidebar-toggle data-tip="Expand sidebar" aria-expanded="true" aria-controls="sidebar">
+      <Icon name="chevronsLeft" class="collapse-icon size-[18px] shrink-0 transition-transform duration-200" />
+      <span class="sidebar-label" data-toggle-label>Collapse sidebar</span>
+    </button>
+  </div>
+</aside>
+<div id="sidebar-backdrop" class="fixed inset-0 z-40 bg-black/45 backdrop-blur-[2px] lg:hidden" data-open="false" aria-hidden="true"></div>
+<div id="nav-tip" class="rounded-md bg-fg px-2 py-1 text-xs font-medium text-bg shadow-pop" aria-hidden="true"></div>

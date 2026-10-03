@@ -16,6 +16,7 @@
     "astro": "7.3.5",
     "chart.js": "4.5.1",
     "dotenv": "16.4.7",
+    "file-type": "^21.3.4",
     "payload": "3.90.2",
     "tailwindcss": "4.3.3"
   },

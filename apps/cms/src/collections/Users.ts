@@ -6,6 +6,7 @@ import { IS_PROD, SERVER_URL } from '../env'
 import { auditHooks } from '../hooks/audit'
 
 export const PASSWORD_MIN_LENGTH = 10
+const TRUSTED_ONLY = ['login', 'refresh', 'resetPassword', 'unlock', 'forgotPassword']
 
 function checkPassword(password: unknown) {
   if (typeof password !== 'string') return
@@ -50,9 +51,8 @@ export const Users: CollectionConfig = {
     },
   },
   access: {
-    // New accounts come from the email-verified registration flow (context.registration) or a System Admin.
-    // Plain REST sign-ups are refused so nobody can skip email verification.
-    create: ({ req }) => hasRole(req.user, 'system-admin') || req.context?.registration === true,
+    // Only System Admins create accounts (invite flow or the create-admin command, which uses overrideAccess).
+    create: isSystemAdmin,
     read: ({ req }) => {
       if (hasRole(req.user, 'system-admin')) return true
       if (!req.user) return false
@@ -69,6 +69,16 @@ export const Users: CollectionConfig = {
     admin: ({ req }) => isApproved(req.user),
   },
   fields: [
+    {
+      // Overrides Payload's built-in auth email field: only System Admins may change an address
+      // (otherwise a stolen session could redirect future 2FA codes to an attacker's mailbox).
+      name: 'email',
+      type: 'email',
+      required: true,
+      unique: true,
+      index: true,
+      access: { update: systemAdminField },
+    },
     { name: 'name', label: 'Full Name', type: 'text', required: true, maxLength: 120 },
     {
       name: 'role',
@@ -99,32 +109,40 @@ export const Users: CollectionConfig = {
       access: { create: () => false, update: () => false },
       admin: { readOnly: true, position: 'sidebar', description: 'Set when the user enters an emailed code.' },
     },
-    { name: 'approvedAt', type: 'date', admin: { readOnly: true, position: 'sidebar' } },
+    {
+      name: 'approvedAt',
+      type: 'date',
+      access: { create: () => false, update: () => false },
+      admin: { readOnly: true, position: 'sidebar' },
+    },
   ],
   hooks: {
     beforeOperation: [
-      ({ args, operation }) => {
+      ({ args, operation, req }) => {
+        // Sign-in, token refresh, password reset and unlock must come from this app's own flows
+        // (email 2FA, 12-hour sessions). Anything else — e.g. Payload's REST endpoints, however the
+        // URL is encoded — is refused here, inside Payload, not just by the URL filter in server.mjs.
+        if (TRUSTED_ONLY.includes(operation) && req.context?.trustedAuth !== true) {
+          throw new APIError('Please sign in on the sign-in page.', 403, undefined, true)
+        }
         if (operation === 'create' || operation === 'update' || operation === 'resetPassword') {
-          checkPassword(args.data?.password)
+          const password = (args.data as { password?: unknown } | undefined)?.password
+          if (password !== undefined) {
+            checkPassword(password)
+            // Changing a password needs proof: the current password (My account), an invite or a reset link.
+            if (operation === 'update' && req.context?.passwordChange !== true) {
+              throw new APIError('Change passwords from “My account” (or use a password reset link).', 403, undefined, true)
+            }
+          }
         }
         return args
       },
     ],
     beforeChange: [
       async ({ data, operation, originalDoc, req }) => {
-        if (operation === 'create') {
-          // Until a System Admin has verified their email, a new sign-up becomes the System Admin so the
-          // system can be bootstrapped (an abandoned, never-verified first sign-up doesn't block this).
-          const { totalDocs } = await req.payload.count({
-            collection: 'users',
-            where: { and: [{ role: { equals: 'system-admin' } }, { emailVerified: { equals: true } }] },
-            overrideAccess: true,
-            req,
-          })
-          if (totalDocs === 0 && req.context?.registration === true) {
-            data.role = 'system-admin'
-            data.status = 'approved'
-          }
+        // A new address must be confirmed again with an emailed code.
+        if (operation === 'update' && data.email && originalDoc?.email && data.email.toLowerCase() !== originalDoc.email.toLowerCase()) {
+          data.emailVerified = false
         }
         if (data.status === 'approved' && originalDoc?.status !== 'approved') {
           data.approvedAt = new Date().toISOString()

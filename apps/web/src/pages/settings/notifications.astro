@@ -1,9 +1,10 @@
 ---
 import { emailConfigured, sendNow } from '@hr/cms/server/mailer'
+import crypto from 'node:crypto'
 
 import Icon from '../../components/Icon.astro'
 import App from '../../layouts/App.astro'
-import { toFormErrors } from '../../lib/errors'
+import { errorMessage, UserError } from '../../lib/errors'
 import { setFlash } from '../../lib/flash'
 
 const { payload, user } = Astro.locals
@@ -12,9 +13,14 @@ if (Astro.request.method === 'POST') {
   const fd = await Astro.request.formData()
   try {
     if (fd.get('action') === 'test') {
-      const to = String(fd.get('to') ?? user!.email).trim()
+      // HR Staff can only test-send to their own address; System Admins use the Email server page.
+      const to = user!.email
       await sendNow(payload, to, 'Test email from the HR system', `Hi,\n\nThis is a test email sent by ${user!.name}. If you can read this, email sending works.`)
       setFlash(Astro.cookies, { type: 'success', message: `Test email sent to ${to}.` })
+    } else if (fd.get('action') === 'rotate') {
+      if (user?.role !== 'system-admin') throw new UserError('Only System Admins can change the cron key.')
+      await payload.updateGlobal({ slug: 'notification-settings', data: { queueKey: crypto.randomBytes(18).toString('hex') }, overrideAccess: true, context: { skipAudit: true } })
+      setFlash(Astro.cookies, { type: 'success', message: 'New cron key created. Update the cron job with the new command.' })
     } else {
       const hourlyLimit = Number(fd.get('hourlyLimit'))
       await payload.updateGlobal({
@@ -35,8 +41,7 @@ if (Astro.request.method === 'POST') {
     }
     return Astro.redirect('/settings/notifications')
   } catch (err) {
-    const fe = toFormErrors(err)
-    error = Object.values(fe.fields)[0] ?? fe.form ?? (err as Error).message
+    error = errorMessage(err)
     Astro.response.status = 400
   }
 }
@@ -46,8 +51,10 @@ const [s, templates, queued] = await Promise.all([
   payload.find({ collection: 'email-templates', sort: 'name', pagination: false, depth: 0, user, overrideAccess: false }),
   payload.count({ collection: 'message-recipients', where: { status: { in: ['queued', 'sending'] } }, overrideAccess: true }),
 ])
-const configured = emailConfigured()
-const cronUrl = `${(process.env.SERVER_URL ?? Astro.url.origin).replace(/\/$/, '')}/internal/queue?key=${s.queueKey ?? ''}`
+const configured = await emailConfigured(payload)
+const isAdmin = user?.role === 'system-admin'
+const queueKey = isAdmin ? (await payload.findGlobal({ slug: 'notification-settings', user, overrideAccess: false })).queueKey : null
+const serverUrl = process.env.SERVER_URL?.replace(/\/$/, '')
 const toggles = [
   ['leaveFiledToEmployee', 'Email the employee when wellness leave is filed'],
   ['leaveStatusToEmployee', 'Email the employee when a leave status changes'],
@@ -90,25 +97,35 @@ const fmt = (d?: string | null) => (d ? new Date(d).toLocaleString('en-PH', { ti
         <h2 class="font-semibold">Mail server</h2>
         {configured ? (
           <p class:list={['rounded-lg px-3 py-2', s.smtpLastError ? 'bg-danger-soft text-danger' : 'bg-success-soft text-success']}>
-            {s.smtpLastError ? `Last error (${fmt(s.smtpLastErrorAt)}): ${s.smtpLastError}` : `Working. Last successful send: ${fmt(s.smtpLastOkAt)}.`}
+            {s.smtpLastError
+              ? isAdmin ? `Last error (${fmt(s.smtpLastErrorAt)}): ${s.smtpLastError}` : 'There is a problem sending email. Your System Admin has been notified on screen.'
+              : `Working. Last successful send: ${fmt(s.smtpLastOkAt)}.`}
           </p>
         ) : (
-          <p class="rounded-lg bg-warning-soft px-3 py-2 text-warning">
-            SMTP is not configured (set SMTP_HOST and the other SMTP_ values in .env). Sign-in codes are written to the server log, and no emails are sent.
-          </p>
+          <p class="rounded-lg bg-warning-soft px-3 py-2 text-warning">The email server is not set up yet{isAdmin ? '' : ' — ask your System Admin'}. Sign-in codes go to the server log and no emails are sent.</p>
         )}
+        {isAdmin && <a class="btn-secondary btn-sm" href="/settings/email-server">Email server (SMTP) settings</a>}
         <p class="text-fg-2">Emails waiting in the queue: <strong class="tabular">{queued.totalDocs}</strong></p>
-        <form method="post" class="flex gap-2">
+        <form method="post">
           <input type="hidden" name="action" value="test" />
-          <input class="input" name="to" type="email" value={user?.email} aria-label="Send test to" />
-          <button class="btn-secondary shrink-0">Send test</button>
+          <button class="btn-secondary btn-sm">Send a test email to me ({user?.email})</button>
         </form>
       </section>
-      <section class="card space-y-2 p-5 text-sm">
-        <h2 class="font-semibold">Cron job</h2>
-        <p class="text-fg-2">Add this to cPanel → Cron Jobs (every 5 minutes) so queued emails go out even when nobody is using the app:</p>
-        <code class="block break-all rounded-lg bg-surface-2 p-2 font-mono text-xs">curl -s "{cronUrl}" &gt; /dev/null</code>
-      </section>
+      {isAdmin && (
+        <section class="card space-y-2 p-5 text-sm">
+          <h2 class="font-semibold">Cron job</h2>
+          <p class="text-fg-2">Add this to cPanel → Cron Jobs (every 5 minutes) so queued emails go out even when nobody is using the app. Keep the key secret.</p>
+          {serverUrl ? (
+            <code class="block break-all rounded-lg bg-surface-2 p-2 font-mono text-xs">curl -s -H "X-Queue-Key: {queueKey}" "{serverUrl}/internal/queue" &gt; /dev/null</code>
+          ) : (
+            <p class="text-warning">Set SERVER_URL in .env to see the command.</p>
+          )}
+          <form method="post" data-confirm="Create a new key? The old cron command will stop working.">
+            <input type="hidden" name="action" value="rotate" />
+            <button class="btn-ghost btn-sm">Rotate key</button>
+          </form>
+        </section>
+      )}
     </aside>
   </div>
 

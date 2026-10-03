@@ -6,7 +6,8 @@
   "exports": {
     "./config": "./src/payload.config.ts",
     "./server/*": "./src/server/*.ts",
-    "./types": "./src/payload-types.ts"
+    "./types": "./src/payload-types.ts",
+    "./email/*": "./src/email/*.ts"
   },
   "scripts": {
     "build": "cross-env NODE_OPTIONS=\"--no-deprecation --max-old-space-size=4096\" next build",
@@ -14,14 +15,15 @@
     "generate:importmap": "cross-env NODE_OPTIONS=--no-deprecation payload generate:importmap",
     "generate:types": "cross-env NODE_OPTIONS=--no-deprecation payload generate:types",
     "payload": "cross-env NODE_OPTIONS=--no-deprecation payload",
-    "seed": "cross-env NODE_OPTIONS=--no-deprecation tsx src/seed/index.ts",
+    "seed": "cross-env NODE_ENV=development NODE_OPTIONS=--no-deprecation tsx src/seed/index.ts",
     "test": "cross-env NODE_OPTIONS=--no-deprecation vitest run --config ./vitest.config.mts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "create-admin": "cross-env NODE_ENV=development NODE_OPTIONS=--no-deprecation tsx src/cli/create-admin.ts",
+    "build:cli": "esbuild src/cli/create-admin.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist-cli/create-admin.mjs --external:payload --external:@payloadcms/* --external:libsql --external:@libsql/* --external:drizzle-orm --external:drizzle-orm/* --external:exceljs --external:dotenv --external:nodemailer --external:file-type --external:pdf-lib --external:@pdf-lib/fontkit \"--banner:js=process.env.NODE_ENV ||= 'production'; process.env.HR_QUEUE_WORKER = 'false';\""
   },
   "dependencies": {
     "@hr/shared": "workspace:*",
     "@payloadcms/db-sqlite": "3.90.2",
-    "@payloadcms/email-nodemailer": "3.90.2",
     "@payloadcms/next": "3.90.2",
     "@payloadcms/ui": "3.90.2",
     "@pdf-lib/fontkit": "^1.1.1",
@@ -29,8 +31,10 @@
     "dotenv": "16.4.7",
     "drizzle-orm": "0.45.2",
     "exceljs": "4.4.0",
+    "file-type": "^21.3.4",
     "graphql": "^16.8.1",
-    "next": "16.3.3",
+    "next": "16.3.8",
+    "nodemailer": "^10.0.14",
     "payload": "3.90.2",
     "pdf-lib": "^1.17.1",
     "react": "19.2.6",
@@ -39,8 +43,10 @@
   },
   "devDependencies": {
     "@types/node": "22.19.9",
+    "@types/nodemailer": "^8.0.2",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
+    "esbuild": "^0.28.2",
     "tsx": "4.23.15",
     "typescript": "5.7.3",
     "vitest": "4.0.18"

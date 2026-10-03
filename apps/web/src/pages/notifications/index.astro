@@ -2,6 +2,7 @@
 import EmptyState from '../../components/EmptyState.astro'
 import Pagination from '../../components/Pagination.astro'
 import App from '../../layouts/App.astro'
+import { safeNext } from '../../lib/auth'
 
 const { payload, user } = Astro.locals
 if (Astro.request.method === 'POST') {
@@ -13,7 +14,7 @@ if (Astro.request.method === 'POST') {
     return Astro.redirect('/notifications')
   }
   const n = await payload.update({ collection: 'notifications', id, data: { readAt: now }, user, overrideAccess: false })
-  return Astro.redirect(n.link && n.link.startsWith('/') ? n.link : '/notifications')
+  return Astro.redirect(n.link ? safeNext(n.link) : '/notifications')
 }
 const page = Math.max(1, Number(Astro.url.searchParams.get('page')) || 1)
 const list = await payload.find({ collection: 'notifications', sort: '-createdAt', page, limit: 30, depth: 0, user, overrideAccess: false })

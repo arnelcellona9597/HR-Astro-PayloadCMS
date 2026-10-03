@@ -3,7 +3,7 @@ import { CONTEXT_MERGE_FIELDS, MERGE_FIELDS } from '@hr/shared'
 
 import Icon from '../../../components/Icon.astro'
 import App from '../../../layouts/App.astro'
-import { toFormErrors } from '../../../lib/errors'
+import { errorMessage } from '../../../lib/errors'
 import { setFlash } from '../../../lib/flash'
 
 const CATEGORIES = ['Leave', 'Payroll', 'Announcement', 'Reminder', 'General', 'System']
@@ -34,8 +34,7 @@ if (Astro.request.method === 'POST') {
     setFlash(Astro.cookies, { type: 'success', message: `Template "${values.name}" saved.` })
     return Astro.redirect('/settings/notifications')
   } catch (err) {
-    const fe = toFormErrors(err)
-    error = Object.values(fe.fields)[0] ?? fe.form ?? (err as Error).message
+    error = errorMessage(err)
     Astro.response.status = 400
   }
 }

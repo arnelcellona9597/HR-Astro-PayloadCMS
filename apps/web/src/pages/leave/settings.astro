@@ -3,7 +3,7 @@ import { formatDate, isValidYmd, todayYmd } from '@hr/shared'
 
 import Icon from '../../components/Icon.astro'
 import App from '../../layouts/App.astro'
-import { toFormErrors } from '../../lib/errors'
+import { errorMessage, UserError } from '../../lib/errors'
 import { setFlash } from '../../lib/flash'
 
 const { payload, user } = Astro.locals
@@ -24,12 +24,12 @@ if (Astro.request.method === 'POST') {
       const yearOverrides = years
         .map((y, i) => ({ year: y, allowance: days[i] === '' ? NaN : Number(days[i]) }))
         .filter((o) => o.year && !Number.isNaN(o.allowance))
-      if (!Number.isInteger(annualAllowance) || annualAllowance < 0) throw new Error('Allowance must be a whole number of days.')
+      if (!Number.isInteger(annualAllowance) || annualAllowance < 0) throw new UserError('Allowance must be a whole number of days.')
       await payload.updateGlobal({ slug: 'leave-settings', data: { annualAllowance, yearOverrides }, user, overrideAccess: false })
       setFlash(Astro.cookies, { type: 'success', message: 'Wellness leave allowance saved.' })
     } else if (action === 'addHoliday') {
       const date = String(fd.get('date') ?? '')
-      if (!isValidYmd(date)) throw new Error('Pick a valid holiday date.')
+      if (!isValidYmd(date)) throw new UserError('Pick a valid holiday date.')
       await payload.create({
         collection: 'holidays',
         data: { date, name: String(fd.get('name') ?? '').trim(), type: String(fd.get('type') ?? 'Regular Holiday') as never },
@@ -43,8 +43,7 @@ if (Astro.request.method === 'POST') {
     }
     return Astro.redirect(`/leave/settings?year=${year}`)
   } catch (err) {
-    const fe = toFormErrors(err)
-    error = Object.values(fe.fields)[0] ?? fe.form ?? (err as Error).message
+    error = errorMessage(err)
     if (/unique|already/i.test(error)) error = 'That date is already in the holiday list.'
     Astro.response.status = 400
   }

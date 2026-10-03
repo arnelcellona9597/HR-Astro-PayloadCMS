@@ -3,6 +3,7 @@ import ExcelJS from 'exceljs'
 import type { Payload } from 'payload'
 
 import { cellText, headerKey, isBlank, plainValue } from './excel/cells'
+import { checkZip } from './excel/zipguard'
 import { itemLabels, saveGrid, type GridRow } from './payroll'
 
 type User = { id: number; name?: string | null; email?: string | null }
@@ -64,6 +65,11 @@ export type PayrollImportPlan = {
 /** Reads a payroll workbook against a period. Nothing is written. */
 export async function analyzePayrollWorkbook(payload: Payload, periodId: number, buffer: ArrayBuffer | Buffer): Promise<PayrollImportPlan> {
   const plan: PayrollImportPlan = { rows: [], errors: [], warnings: [] }
+  const zipError = checkZip(buffer)
+  if (zipError) {
+    plan.errors.push({ message: zipError })
+    return plan
+  }
   const wb = new ExcelJS.Workbook()
   try {
     await wb.xlsx.load(buffer as ArrayBuffer)

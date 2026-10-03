@@ -125,11 +125,12 @@ export const Notifications: CollectionConfig = {
     create: nobody,
   },
   defaultSort: '-createdAt',
+  // Only readAt may be changed by the owner; everything else is written by the system.
   fields: [
-    { name: 'user', type: 'relationship', relationTo: 'users', required: true, index: true },
-    { name: 'title', type: 'text', required: true },
-    { name: 'body', type: 'textarea' },
-    { name: 'link', type: 'text' },
+    { name: 'user', type: 'relationship', relationTo: 'users', required: true, index: true, access: { update: () => false } },
+    { name: 'title', type: 'text', required: true, access: { update: () => false } },
+    { name: 'body', type: 'textarea', access: { update: () => false } },
+    { name: 'link', type: 'text', access: { update: () => false } },
     { name: 'readAt', type: 'date', index: true },
   ],
   timestamps: true,

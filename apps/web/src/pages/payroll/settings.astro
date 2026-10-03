@@ -3,7 +3,7 @@ import type { Payslip as PayslipDoc } from '@hr/cms/types'
 
 import Payslip from '../../components/payroll/Payslip.astro'
 import App from '../../layouts/App.astro'
-import { toFormErrors } from '../../lib/errors'
+import { errorMessage, UserError } from '../../lib/errors'
 import { setFlash } from '../../lib/flash'
 
 const { payload, user, settings: site } = Astro.locals
@@ -29,7 +29,7 @@ if (Astro.request.method === 'POST') {
   try {
     const earningItems = lines('earningItems').map((label) => ({ label }))
     const deductionItems = lines('deductionItems').map((label) => ({ label }))
-    if (!earningItems.length || !deductionItems.length) throw new Error('List at least one earning item and one deduction item.')
+    if (!earningItems.length || !deductionItems.length) throw new UserError('List at least one earning item and one deduction item.')
     await payload.updateGlobal({
       slug: 'payslip-settings',
       data: {
@@ -54,8 +54,7 @@ if (Astro.request.method === 'POST') {
     setFlash(Astro.cookies, { type: 'success', message: 'Payslip template saved. New prints and PDFs use it right away.' })
     return Astro.redirect('/payroll/settings')
   } catch (err) {
-    const fe = toFormErrors(err)
-    error = Object.values(fe.fields)[0] ?? ((err as { status?: number }).status ? fe.form : (err as Error).message) ?? 'Could not save.'
+    error = errorMessage(err)
     Astro.response.status = 400
   }
 }

@@ -19,59 +19,77 @@ beforeAll(async () => {
   payload = await getPayload({ config: await config })
 })
 
-const register = (data: Record<string, unknown>) =>
-  payload.create({ collection: 'users', data: data as any, overrideAccess: false, context: { registration: true } })
+const trusted = { trustedAuth: true }
+const login = (email: string, password: string) =>
+  payload.login({ collection: 'users', data: { email, password }, context: trusted } as any) as Promise<{ token?: string }>
 
-describe('users & registration', () => {
-  it('makes the first registered user an approved System Admin', async () => {
-    const u = await register({ name: 'First Admin', email: 'admin@example.com', password: PASSWORD })
+describe('users & accounts', () => {
+  it('bootstraps the first System Admin the way the create-admin command does', async () => {
+    await payload.create({
+      collection: 'users',
+      data: { name: 'First Admin', email: 'admin@example.com', password: PASSWORD, role: 'system-admin', status: 'approved' } as any,
+      overrideAccess: true,
+      context: { passwordChange: true },
+    })
     superAdmin = await asUser('admin@example.com')
-    expect(superAdmin.role).toBe('system-admin')
-    expect(superAdmin.status).toBe('approved')
-    expect(superAdmin.emailVerified).toBe(false)
-    expect(u.id).toBeDefined()
-    // (Normally done by entering the emailed code.)
-    await payload.update({ collection: 'users', id: u.id, data: { emailVerified: true }, overrideAccess: true })
+    expect(superAdmin).toMatchObject({ role: 'system-admin', status: 'approved', emailVerified: false })
   })
 
-  it('creates later sign-ups as pending HR Staff, even if they ask for more', async () => {
-    await register({ name: 'Sneaky', email: 'staff@example.com', password: PASSWORD, role: 'system-admin', status: 'approved', emailVerified: true })
-    const u = await asUser('staff@example.com')
-    expect(u.role).toBe('hr-staff')
-    expect(u.status).toBe('pending')
-    expect(u.emailVerified).toBe(false)
-  })
-
-  it('refuses sign-ups that skip the email-verified registration flow', async () => {
+  it('refuses account creation by anyone but a System Admin', async () => {
     await expect(
-      payload.create({ collection: 'users', data: { name: 'Rest', email: 'rest@example.com', password: PASSWORD } as any, overrideAccess: false }),
+      payload.create({ collection: 'users', data: { name: 'Anon', email: 'anon@example.com', password: PASSWORD } as any, overrideAccess: false }),
+    ).rejects.toThrow()
+    await expect(
+      payload.create({
+        collection: 'users',
+        data: { name: 'Anon', email: 'anon@example.com', password: PASSWORD } as any,
+        overrideAccess: false,
+        context: { registration: true },
+      }),
     ).rejects.toThrow()
   })
 
+  it('lets a System Admin create HR Staff', async () => {
+    await payload.create({
+      collection: 'users',
+      data: { name: 'Sneaky', email: 'staff@example.com', password: PASSWORD, role: 'hr-staff', status: 'approved' } as any,
+      user: superAdmin,
+      overrideAccess: false,
+    })
+    staff = await asUser('staff@example.com')
+    expect(staff.role).toBe('hr-staff')
+  })
+
   it('rejects weak passwords', async () => {
-    await expect(register({ name: 'Weak', email: 'weak@example.com', password: 'short1' })).rejects.toThrow(/at least 10/)
-  })
-
-  it('blocks login until approved', async () => {
     await expect(
-      payload.login({ collection: 'users', data: { email: 'staff@example.com', password: PASSWORD } }),
-    ).rejects.toThrow(/approval/)
+      payload.create({ collection: 'users', data: { name: 'Weak', email: 'weak@example.com', password: 'short1' } as any, user: superAdmin, overrideAccess: false }),
+    ).rejects.toThrow(/at least 10/)
   })
 
-  it('lets a System Admin approve, after which login works with a 12-hour token', async () => {
-    const pending = await asUser('staff@example.com')
-    await payload.update({ collection: 'users', id: pending.id, data: { status: 'approved' }, user: superAdmin, overrideAccess: false })
-    const res = await payload.login({ collection: 'users', data: { email: 'staff@example.com', password: PASSWORD } })
-    expect(res.token).toBeTruthy()
+  it('only allows sign-in started by the app (2FA flow), never a plain login call', async () => {
+    await expect(payload.login({ collection: 'users', data: { email: 'staff@example.com', password: PASSWORD } })).rejects.toThrow(/sign-in page/)
+    const res = await login('staff@example.com', PASSWORD)
     const claims = JSON.parse(Buffer.from(res.token!.split('.')[1]!, 'base64url').toString())
     expect(claims.exp - claims.iat).toBe(12 * 60 * 60)
+  })
+
+  it('blocks disabled accounts', async () => {
+    await payload.update({ collection: 'users', id: staff.id, data: { status: 'disabled' }, user: superAdmin, overrideAccess: false })
+    await expect(login('staff@example.com', PASSWORD)).rejects.toThrow(/disabled/)
+    await payload.update({ collection: 'users', id: staff.id, data: { status: 'approved' }, user: superAdmin, overrideAccess: false })
     staff = await asUser('staff@example.com')
   })
 
-  it('does not let HR Staff promote themselves', async () => {
-    await payload.update({ collection: 'users', id: staff.id, data: { role: 'system-admin' } as any, user: staff, overrideAccess: false })
+  it('does not let HR Staff promote themselves, change their email, or set a password without proof', async () => {
+    await payload.update({ collection: 'users', id: staff.id, data: { role: 'system-admin', email: 'evil@example.com' } as any, user: staff, overrideAccess: false })
     const after = await asUser('staff@example.com')
     expect(after.role).toBe('hr-staff')
+    expect(after.email).toBe('staff@example.com')
+    await expect(
+      payload.update({ collection: 'users', id: staff.id, data: { password: 'NewPassw0rd99' } as any, user: staff, overrideAccess: false }),
+    ).rejects.toThrow(/My account/)
+    await payload.update({ collection: 'users', id: staff.id, data: { password: 'NewPassw0rd99' } as any, user: staff, overrideAccess: false, context: { passwordChange: true } })
+    await expect(login('staff@example.com', 'NewPassw0rd99')).resolves.toBeTruthy()
   })
 
   it('does not let HR Staff read or create HR accounts', async () => {
@@ -82,14 +100,12 @@ describe('users & registration', () => {
     ).rejects.toThrow()
   })
 
-  it('lets a System Admin add accounts directly', async () => {
-    const u = await payload.create({
-      collection: 'users',
-      data: { name: 'Added', email: 'added@example.com', password: PASSWORD, role: 'hr-staff', status: 'approved' } as any,
-      user: superAdmin,
-      overrideAccess: false,
-    })
-    expect(u.status).toBe('approved')
+  it('resets email verification when a System Admin changes an address', async () => {
+    await payload.update({ collection: 'users', id: staff.id, data: { emailVerified: true } as any, overrideAccess: true })
+    const u = await payload.update({ collection: 'users', id: staff.id, data: { email: 'staff2@example.com' }, user: superAdmin, overrideAccess: false })
+    expect(u.emailVerified).toBe(false)
+    await payload.update({ collection: 'users', id: staff.id, data: { email: 'staff@example.com' }, user: superAdmin, overrideAccess: false })
+    staff = await asUser('staff@example.com')
   })
 
   it('keeps at least one System Admin', async () => {

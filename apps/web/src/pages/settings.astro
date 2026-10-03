@@ -26,7 +26,7 @@ if (Astro.request.method === 'POST') {
   }
   const bad = PALETTE_KEYS.filter((k) => !HEX_RE.test(palette[k]))
   const logo = fd.get('logo') as File | null
-  const logoError = checkImage(logo, 2 * 1024 * 1024, IMAGE_TYPES)
+  const logoError = await checkImage(logo, 2 * 1024 * 1024, IMAGE_TYPES)
   if (!values.companyName) error = 'Enter the company name.'
   else if (bad.length) error = `Use hex colors like #1d4ed8 for: ${bad.join(', ')}.`
   else if (logoError) error = logoError

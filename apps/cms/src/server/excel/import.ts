@@ -11,6 +11,7 @@ import { createLocalReq, type CollectionSlug, type Payload, type PayloadRequest 
 import { cleanText } from '../../fields'
 import { writeAudit } from '../../hooks/audit'
 import { cellDate, cellText, headerKey, isBlank, plainValue } from './cells'
+import { checkZip } from './zipguard'
 
 type Doc = Record<string, unknown>
 type User = Parameters<Payload['find']>[0]['user']
@@ -184,6 +185,8 @@ function existingKey(mod: ModuleDef, doc: Doc): string {
 
 /** Reads a workbook and works out exactly what importing it would do. Nothing is written. */
 export async function analyzeWorkbook(payload: Payload, buffer: ArrayBuffer | Buffer, opts: { moduleHint?: string } = {}): Promise<ImportPlan> {
+  const zipError = checkZip(buffer)
+  if (zipError) return { sheets: [], plans: [], errors: [{ sheet: '', message: zipError }], warnings: [] }
   const wb = new ExcelJS.Workbook()
   try {
     await wb.xlsx.load(buffer as ArrayBuffer)

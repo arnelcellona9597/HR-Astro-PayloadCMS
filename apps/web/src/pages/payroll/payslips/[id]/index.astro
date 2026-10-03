@@ -4,7 +4,7 @@ import { formatCentavos } from '@hr/shared'
 
 import Icon from '../../../../components/Icon.astro'
 import App from '../../../../layouts/App.astro'
-import { toFormErrors } from '../../../../lib/errors'
+import { errorMessage } from '../../../../lib/errors'
 import { setFlash } from '../../../../lib/flash'
 
 const { payload, user } = Astro.locals
@@ -44,7 +44,7 @@ if (Astro.request.method === 'POST') {
     }
     errors = res.errors.map((e) => e.message)
   } catch (err) {
-    errors = [toFormErrors(err).form ?? (err as Error).message]
+    errors = [errorMessage(err)]
   }
   Astro.response.status = 400
 }

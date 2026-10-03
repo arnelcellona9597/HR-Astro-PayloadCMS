@@ -1,5 +1,5 @@
 ---
-import { discardPending, readPending, stagePendingImport } from '@hr/cms/server/imports'
+import { claimPending, stagePendingImport } from '@hr/cms/server/imports'
 import { analyzePayrollWorkbook, commitPayrollImport, type PayrollImportPlan } from '@hr/cms/server/payroll-excel'
 import { writeAudit } from '@hr/cms/server/audit'
 
@@ -28,14 +28,18 @@ if (fd.get('action') === 'upload') {
   }
 } else {
   token = String(fd.get('token') ?? '')
-  const staged = readPending(token, user!.id)
-  if (!staged || staged.meta.moduleHint !== `payroll:${id}`) error = 'This upload expired. Upload the file again.'
-  else {
+  const staged = claimPending(token, user!.id)
+  if (!staged || staged.meta.moduleHint !== `payroll:${id}`) {
+    staged?.release()
+    error = 'This upload expired or was already imported. Upload the file again.'
+  } else {
     plan = await analyzePayrollWorkbook(payload, id, staged.buffer)
-    if (!plan.errors.length) {
+    if (plan.errors.length) staged.release()
+    else {
       const res = await commitPayrollImport(payload, { id: user!.id, name: user!.name, email: user!.email }, id, plan)
+      if (!res.ok) staged.release()
       if (res.ok) {
-        discardPending(token)
+        staged.finish()
         await writeAudit(payload, user, { action: 'import', collectionSlug: 'payslips', docLabel: `${period.name}: ${staged.meta.fileName}`, changes: { created: res.created, updated: res.updated } })
         setFlash(Astro.cookies, { type: 'success', message: `Imported ${staged.meta.fileName}: ${res.updated} payslip(s) updated, ${res.created} created.` })
         return Astro.redirect(`/payroll/${id}`)

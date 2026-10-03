@@ -36,7 +36,12 @@ const counts = async () =>
 
 beforeAll(async () => {
   payload = await getPayload({ config: await config })
-  await payload.create({ collection: 'users', data: { name: 'Admin', email: 'a@x.test', password: 'Sup3rSecret!pw' } as any, context: { registration: true } })
+  await payload.create({
+    collection: 'users',
+    data: { name: 'Admin', email: 'a@x.test', password: 'Sup3rSecret!pw', role: 'system-admin', status: 'approved' } as any,
+    overrideAccess: true,
+    context: { passwordChange: true },
+  })
   admin = { ...(await payload.find({ collection: 'users', overrideAccess: true })).docs[0], collection: 'users' }
   const b = await payload.create({ collection: 'branches', data: { name: 'Main Office', code: 'MAIN' }, ...opts() })
   await payload.create({ collection: 'holidays', data: { date: '2025-06-12', name: 'Independence Day' }, ...opts() })

@@ -128,12 +128,14 @@ export interface Config {
     'leave-settings': LeaveSetting;
     'notification-settings': NotificationSetting;
     'payslip-settings': PayslipSetting;
+    'smtp-settings': SmtpSetting;
   };
   globalsSelect: {
     'site-settings': SiteSettingsSelect<false> | SiteSettingsSelect<true>;
     'leave-settings': LeaveSettingsSelect<false> | LeaveSettingsSelect<true>;
     'notification-settings': NotificationSettingsSelect<false> | NotificationSettingsSelect<true>;
     'payslip-settings': PayslipSettingsSelect<false> | PayslipSettingsSelect<true>;
+    'smtp-settings': SmtpSettingsSelect<false> | SmtpSettingsSelect<true>;
   };
   locale: null;
   widgets: {
@@ -720,7 +722,7 @@ export interface ImportJob {
 export interface LoginChallenge {
   id: number;
   key: string;
-  purpose: 'login' | 'register';
+  purpose: 'login' | 'invite';
   user: number | User;
   codeHash: string;
   tokenEnc?: string | null;
@@ -1431,7 +1433,7 @@ export interface NotificationSetting {
   replyTo?: string | null;
   footer?: string | null;
   /**
-   * Secret used by the cron job that sends queued emails (/internal/queue?key=…).
+   * Secret for the cron job that sends queued emails (X-Queue-Key header).
    */
   queueKey?: string | null;
   smtpLastError?: string | null;
@@ -1491,6 +1493,28 @@ export interface PayslipSetting {
   certifiedByTitle?: string | null;
   footerNote?: string | null;
   paperSize: 'A4' | 'Letter' | 'Half-Letter';
+  updatedAt?: string | null;
+  createdAt?: string | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "smtp-settings".
+ */
+export interface SmtpSetting {
+  id: number;
+  host?: string | null;
+  port?: number | null;
+  security?: ('ssl' | 'starttls' | 'none') | null;
+  username?: string | null;
+  /**
+   * Leave blank to keep the saved password.
+   */
+  password?: string | null;
+  clearPassword?: boolean | null;
+  passwordEnc?: string | null;
+  passwordSet?: boolean | null;
+  fromAddress?: string | null;
+  fromName?: string | null;
   updatedAt?: string | null;
   createdAt?: string | null;
 }
@@ -1594,6 +1618,25 @@ export interface PayslipSettingsSelect<T extends boolean = true> {
   certifiedByTitle?: T;
   footerNote?: T;
   paperSize?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  globalType?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "smtp-settings_select".
+ */
+export interface SmtpSettingsSelect<T extends boolean = true> {
+  host?: T;
+  port?: T;
+  security?: T;
+  username?: T;
+  password?: T;
+  clearPassword?: T;
+  passwordEnc?: T;
+  passwordSet?: T;
+  fromAddress?: T;
+  fromName?: T;
   updatedAt?: T;
   createdAt?: T;
   globalType?: T;

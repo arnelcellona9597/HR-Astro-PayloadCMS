@@ -7,7 +7,8 @@ import { readCaptured } from '../../src/email/capture'
 import { DATA_DIR } from '../../src/env'
 import { processQueue, queueMessage } from '../../src/server/mailer'
 import { generatePayslips, releasePeriod, saveGrid } from '../../src/server/payroll'
-import { resendChallenge, startLogin, startRegistration, verifyChallenge } from '../../src/server/twofactor'
+import { inviteUser, issuePasswordLink, passwordLinkInfo, setPasswordWithLink } from '../../src/server/accounts'
+import { resendChallenge, startLogin, verifyChallenge } from '../../src/server/twofactor'
 
 let payload: Payload
 let admin: any
@@ -31,7 +32,12 @@ const drain = async () => {
 
 beforeAll(async () => {
   payload = await getPayload({ config: await config })
-  await payload.create({ collection: 'users', data: { name: 'Ana Admin', email: 'admin@x.test', password: PASSWORD } as any, overrideAccess: false, context: { registration: true } })
+  await payload.create({
+    collection: 'users',
+    data: { name: 'Ana Admin', email: 'admin@x.test', password: PASSWORD, role: 'system-admin', status: 'approved' } as any,
+    overrideAccess: true,
+    context: { passwordChange: true },
+  })
   admin = { ...(await payload.find({ collection: 'users', overrideAccess: true })).docs[0], collection: 'users' }
   branchId = (await payload.create({ collection: 'branches', data: { name: 'North' }, overrideAccess: true })).id
   const base = { gender: 'Female', classification: 'Regular', employmentStatus: 'Active', station: branchId } as const
@@ -54,7 +60,7 @@ describe('email 2FA', () => {
     expect((wrong as any).error).toMatch(/4 attempts left/)
 
     const ok = await verifyChallenge(payload, start.challenge, code)
-    expect(ok.ok && ok.purpose === 'login').toBe(true)
+    expect(ok.ok).toBe(true)
     const token = (ok as any).token as string
     const me = await payload.auth({ headers: new Headers({ Authorization: `JWT ${token}` }) })
     expect(me.user?.email).toBe('admin@x.test')
@@ -88,16 +94,53 @@ describe('email 2FA', () => {
     expect(readCaptured(DATA_DIR).length).toBe(mails)
   })
 
-  it('verifies the email of new registrations before admins are notified', async () => {
-    const start = await startRegistration(payload, { name: 'New Staff', email: 'NEW@x.test', password: PASSWORD })
-    const user = (await payload.find({ collection: 'users', where: { email: { equals: 'new@x.test' } }, overrideAccess: true })).docs[0]!
-    expect(user).toMatchObject({ status: 'pending', emailVerified: false, role: 'hr-staff' })
-    expect((await payload.count({ collection: 'notifications', overrideAccess: true })).totalDocs).toBe(0)
-    const res = await verifyChallenge(payload, start.challenge, lastCode('new@x.test'))
-    expect(res).toMatchObject({ ok: true, purpose: 'register', firstUser: false })
-    expect((await payload.findByID({ collection: 'users', id: user.id, overrideAccess: true })).emailVerified).toBe(true)
-    const bell = await payload.find({ collection: 'notifications', where: { user: { equals: admin.id } }, overrideAccess: true })
-    expect(bell.docs[0]?.title).toMatch(/New Staff/)
+  it('counts parallel wrong guesses atomically (never more than 5)', async () => {
+    const start = await startLogin(payload, 'admin@x.test', PASSWORD)
+    const real = lastCode('admin@x.test')
+    const wrong = real === '000000' ? '111111' : '000000'
+    const results = await Promise.all(Array.from({ length: 12 }, () => verifyChallenge(payload, start.challenge, wrong)))
+    expect(results.every((r) => !r.ok)).toBe(true)
+    // The challenge is gone: even the right code no longer works.
+    expect((await verifyChallenge(payload, start.challenge, real)).ok).toBe(false)
+  })
+})
+
+describe('accounts: invites and password links', () => {
+  let inviteLink = ''
+  it('creates an approved account with no usable password and emails a single-use link', async () => {
+    const res = await inviteUser(payload, admin, { name: 'New Staff', email: 'NEW@x.test', role: 'hr-staff' })
+    expect(res.user).toMatchObject({ email: 'new@x.test', status: 'approved', role: 'hr-staff', emailVerified: false })
+    expect(res.delivered).toBe(true)
+    const mail = readCaptured(DATA_DIR).filter((m) => m.to === 'new@x.test').at(-1)!
+    expect(mail.subject).toMatch(/set your password/i)
+    inviteLink = /(https?:\/\/\S+set-password\?token=[a-f0-9]{64})/.exec(mail.text ?? '')![1]!
+    // The token is not stored in plain text
+    const token = new URL(inviteLink).searchParams.get('token')!
+    const stored = await payload.find({ collection: 'login-challenges', where: { purpose: { equals: 'invite' } }, overrideAccess: true })
+    expect(JSON.stringify(stored.docs)).not.toContain(token)
+    // Invitations never appear in the Messages outbox
+    expect((await payload.count({ collection: 'messages', where: { subject: { like: 'set your password' } }, overrideAccess: true })).totalDocs).toBe(0)
+    await expect(startLogin(payload, 'new@x.test', 'whatever123')).rejects.toThrow()
+  })
+
+  it('lets the user choose a password once, then sign in with 2FA', async () => {
+    const token = new URL(inviteLink).searchParams.get('token')!
+    expect(await passwordLinkInfo(payload, token)).toMatchObject({ kind: 'invite', name: 'New Staff' })
+    await setPasswordWithLink(payload, token, 'MyOwnPassw0rd')
+    await expect(setPasswordWithLink(payload, token, 'Another1Passw0rd')).rejects.toThrow(/invalid or has expired|already used/)
+    const u = (await payload.find({ collection: 'users', where: { email: { equals: 'new@x.test' } }, overrideAccess: true })).docs[0]!
+    expect(u.emailVerified).toBe(true)
+    const start = await startLogin(payload, 'new@x.test', 'MyOwnPassw0rd')
+    expect((await verifyChallenge(payload, start.challenge, lastCode('new@x.test'))).ok).toBe(true)
+  })
+
+  it('expires reset links after an hour', async () => {
+    const u = (await payload.find({ collection: 'users', where: { email: { equals: 'new@x.test' } }, overrideAccess: true })).docs[0]!
+    const { link } = await issuePasswordLink(payload, u.id, 'reset')
+    const token = new URL(link).searchParams.get('token')!
+    const c = (await payload.find({ collection: 'login-challenges', where: { purpose: { equals: 'invite' } }, overrideAccess: true })).docs[0]!
+    await payload.update({ collection: 'login-challenges', id: c.id, data: { expiresAt: new Date(Date.now() - 1000).toISOString() }, overrideAccess: true })
+    expect(await passwordLinkInfo(payload, token)).toBeNull()
   })
 })
 

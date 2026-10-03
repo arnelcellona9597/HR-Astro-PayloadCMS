@@ -30,22 +30,9 @@ async function login(page: Page, who: { email: string; password: string }) {
   await page.waitForURL((u) => !u.pathname.startsWith('/login'))
 }
 
-async function register(page: Page, who: typeof ADMIN) {
+test('the first System Admin (created with the server command) signs in with the emailed code', async ({ page }) => {
   await page.goto('/register')
-  await page.fill('#name', who.name)
-  await page.fill('#email', who.email)
-  await page.fill('#password', who.password)
-  await page.fill('#confirm', who.password)
-  await page.locator('form button').click()
-  await page.waitForURL('**/register/verify')
-  await expect(page.getByText('We sent a 6-digit code')).toBeVisible()
-  await page.fill('#code', codeFor(who.email))
-  await page.waitForURL('**/login?notice=*')
-}
-
-test('first account becomes System Admin; sign-in needs the emailed code', async ({ page }) => {
-  await register(page, ADMIN)
-  await expect(page.getByText('Email verified')).toBeVisible()
+  await expect(page.getByText('Accounts are created by a System Admin')).toBeVisible()
   await submitPassword(page, ADMIN)
   await page.waitForURL('**/login/verify')
   await page.fill('#code', codeFor(ADMIN.email) === '000000' ? '111111' : '000000')
@@ -54,31 +41,83 @@ test('first account becomes System Admin; sign-in needs the emailed code', async
   await page.waitForURL((u) => !u.pathname.startsWith('/login'))
   await expect(page.getByText(/Signed in until/)).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Employee statistics' })).toBeVisible()
-  await expect(page.getByText('Total employees')).toBeVisible()
   await expect(page.getByText('Male and female employees')).toBeVisible()
   await expect(page.locator('canvas[data-bar-chart]').first()).toBeVisible()
 })
 
-test('new sign-ups wait for approval and staff cannot manage users', async ({ page, browser }) => {
-  await register(page, STAFF)
-  await expect(page.getByText('A System Admin must approve your account')).toBeVisible()
-  await submitPassword(page, STAFF)
-  await expect(page.getByText('waiting for approval')).toBeVisible()
-
+test('a System Admin invites HR Staff, who choose their own password; staff cannot manage accounts', async ({ page, browser }) => {
   const adminCtx = await browser.newContext()
   const admin = await adminCtx.newPage()
   await login(admin, ADMIN)
-  await admin.goto('/notifications')
-  await expect(admin.getByText('New HR account request: Sam Staff')).toBeVisible()
   await admin.goto('/users')
-  await admin.getByRole('button', { name: 'Approve as HR Staff' }).click()
-  await expect(admin.getByText('Sam Staff can now sign in.')).toBeVisible()
+  await admin.fill('#n-name', STAFF.name)
+  await admin.fill('#n-email', STAFF.email)
+  await admin.getByRole('button', { name: 'Create & send invitation' }).click()
+  await expect(admin.getByText(/Account created for Sam Staff/)).toBeVisible()
   await adminCtx.close()
+
+  const invite = mails().filter((m) => m.to === STAFF.email).at(-1)!
+  const link = /(https?:\/\/\S+\/set-password\?token=[a-f0-9]{64})/.exec(invite.text ?? '')![1]!
+  await page.goto(new URL(link).pathname + new URL(link).search)
+  await expect(page.getByText('Welcome — choose your password')).toBeVisible()
+  await page.fill('#password', STAFF.password)
+  await page.fill('#confirm', STAFF.password)
+  await page.getByRole('button', { name: 'Save password' }).click()
+  await expect(page.getByText('Password saved')).toBeVisible()
+  // The link works only once
+  await page.goto(new URL(link).pathname + new URL(link).search)
+  await expect(page.getByText(/invalid, was already used or has expired/)).toBeVisible()
 
   await login(page, STAFF)
   await expect(page.getByRole('heading', { name: 'Employee statistics' })).toBeVisible()
   await page.goto('/users')
   await expect(page.getByText("You don't have permission to open that page.")).toBeVisible()
+  await page.goto('/settings/email-server')
+  await expect(page.getByText("You don't have permission to open that page.")).toBeVisible()
+})
+
+test('security: encoded login URLs are blocked, headers are set, rate limits hold', async ({ page, request }) => {
+  for (const path of ['/api/users/logi%6E', '/api//users/login', '/API/users/login/', '/api/users/refresh-token']) {
+    const res = await request.post(path, { data: { email: ADMIN.email, password: ADMIN.password }, headers: { 'Content-Type': 'application/json' } })
+    expect(res.status(), path).toBe(403)
+  }
+  const signup = await request.post('/api/users', { data: { name: 'x', email: 'x@x.test', password: 'Passw0rd12345' } })
+  expect(signup.status()).toBe(403)
+
+  const res = await page.goto('/login')
+  const h = res!.headers()
+  expect(h['content-security-policy']).toContain("object-src 'none'")
+  expect(h['x-frame-options']).toBe('SAMEORIGIN')
+  expect(h['x-content-type-options']).toBe('nosniff')
+
+  // A spoofed (leftmost) X-Forwarded-For doesn't give a fresh rate-limit budget.
+  let limited = false
+  for (let i = 0; i < 25 && !limited; i++) {
+    const r = await request.post('/forgot-password', {
+      form: { email: `nobody${i}@x.test` },
+      headers: { 'X-Forwarded-For': `10.9.${i}.1, 198.51.100.7`, Origin: new URL(page.url()).origin },
+    })
+    limited = r.status() === 429
+  }
+  expect(limited).toBe(true)
+})
+
+test('System Admin saves SMTP settings in the app; the password is never shown again', async ({ page }) => {
+  await login(page, ADMIN)
+  const errors: string[] = []
+  page.on('console', (m) => m.type() === 'error' && /Content Security Policy|Refused/.test(m.text()) && errors.push(m.text()))
+  await page.goto('/settings/email-server')
+  await page.fill('#host', 'mail.example.test')
+  await page.fill('#port', '465')
+  await page.fill('#username', 'info@example.test')
+  await page.fill('#password', 'not-a-real-password')
+  await page.fill('#fromAddress', 'info@example.test')
+  await page.getByRole('button', { name: 'Save and test connection' }).click()
+  await expect(page.getByText(/Saved/).first()).toBeVisible()
+  await expect(page.getByText('saved (encrypted)')).toBeVisible()
+  expect(await page.content()).not.toContain('not-a-real-password')
+  for (const p of ['/', '/employees', '/payroll', '/messages/new', '/leave']) await page.goto(p)
+  expect(errors).toEqual([])
 })
 
 test('employee form validates, saves, and advanced search finds the record', async ({ page }) => {

@@ -2,11 +2,12 @@
 import { inviteUser, issuePasswordLink } from '@hr/cms/server/accounts'
 import { ROLE_LABELS, ROLES } from '@hr/shared/enums'
 
+import Avatar from '../components/Avatar.astro'
 import Icon from '../components/Icon.astro'
 import App from '../layouts/App.astro'
 import { toFormErrors, UserError } from '../lib/errors'
 import { setFlash } from '../lib/flash'
-import { statusBadge } from '../lib/format'
+import { relId, statusBadge } from '../lib/format'
 
 const { payload, user } = Astro.locals
 // Middleware already limits this page to System Admins; check again so every action is protected
@@ -88,8 +89,13 @@ const locked = (u: { lockUntil?: string | null }) => Boolean(u.lockUntil && new 
             return (
               <tr>
                 <td class="font-medium">
-                  {u.name}{self && <span class="ml-2 badge-primary">You</span>}
-                  {!u.emailVerified && <span class="ml-2 badge-warning" title="Hasn't set a password / signed in yet">Invitation pending</span>}
+                  <div class="flex items-center gap-3">
+                    <Avatar name={u.name} imageId={relId(u.avatar)} class="size-8 text-xs" />
+                    <div class="min-w-0">
+                      {u.name}{self && <span class="ml-2 badge-primary">You</span>}
+                      {!u.emailVerified && <span class="ml-2 badge-warning" title="Hasn't set a password / signed in yet">Invitation pending</span>}
+                    </div>
+                  </div>
                 </td>
                 <td class="text-fg-2">{u.email}</td>
                 <td>

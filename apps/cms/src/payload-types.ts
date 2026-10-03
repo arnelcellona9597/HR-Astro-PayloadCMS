@@ -502,6 +502,10 @@ export interface PayrollPeriod {
 export interface User {
   id: number;
   name: string;
+  /**
+   * PNG, JPG, WEBP or GIF image, up to 2 MB. Change it from “My account”.
+   */
+  avatar?: (number | null) | Media;
   role: 'system-admin' | 'hr-staff';
   /**
    * Only approved accounts can sign in.
@@ -1214,6 +1218,7 @@ export interface HolidaysSelect<T extends boolean = true> {
  */
 export interface UsersSelect<T extends boolean = true> {
   name?: T;
+  avatar?: T;
   role?: T;
   status?: T;
   emailVerified?: T;

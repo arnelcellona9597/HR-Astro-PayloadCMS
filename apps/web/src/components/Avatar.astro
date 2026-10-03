@@ -1,0 +1,22 @@
+---
+// A person's picture, or their initials when there is none. Decorative: the name is always shown
+// (or announced) next to it.
+import { initials } from '../lib/nav'
+
+interface Props {
+  name: string | null | undefined
+  /** Media id of the picture, if any. */
+  imageId?: number | null
+  class?: string
+}
+const { name, imageId, class: cls = 'size-8 text-xs' } = Astro.props
+---
+{
+  imageId ? (
+    <img src={`/files/${imageId}`} alt="" class:list={['shrink-0 rounded-full bg-surface-2 object-cover', cls]} loading="lazy" decoding="async" />
+  ) : (
+    <span class:list={['flex shrink-0 items-center justify-center rounded-full bg-primary font-semibold text-on-primary', cls]} aria-hidden="true">
+      {initials(name)}
+    </span>
+  )
+}

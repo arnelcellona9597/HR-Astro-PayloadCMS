@@ -1,0 +1,200 @@
+---
+import { certificateCss } from '@hr/shared/certificates'
+import { todayYmd } from '@hr/shared'
+
+import Icon from '../../components/Icon.astro'
+import App from '../../layouts/App.astro'
+import { employeeChoices } from '../../lib/choices'
+import { errorMessage } from '../../lib/errors'
+import { setFlash } from '../../lib/flash'
+
+const { payload, user } = Astro.locals
+const p = Astro.url.searchParams
+let error = ''
+let values = {
+  employee: Number(p.get('employee')) || null,
+  template: Number(p.get('template')) || null,
+  purpose: (p.get('purpose') ?? '').slice(0, 200),
+  issuedDate: todayYmd(),
+}
+
+if (Astro.request.method === 'POST') {
+  const fd = await Astro.request.formData()
+  values = {
+    employee: Number(fd.get('employee')) || null,
+    template: Number(fd.get('template')) || null,
+    purpose: String(fd.get('purpose') ?? '').trim().slice(0, 200),
+    issuedDate: String(fd.get('issuedDate') ?? '') || todayYmd(),
+  }
+  try {
+    if (!values.employee) throw new Error('Choose an employee.')
+    if (!values.template) throw new Error('Choose a certificate.')
+    const cert = await payload.create({
+      collection: 'certificates',
+      data: { employee: values.employee, template: values.template, purpose: values.purpose, issuedDate: values.issuedDate } as never,
+      user,
+      overrideAccess: false,
+    })
+    setFlash(Astro.cookies, { type: 'success', message: `Certificate ${cert.controlNumber} issued. Print it or download the PDF.` })
+    return Astro.redirect(`/certificates/${cert.id}`)
+  } catch (err) {
+    error = /^Choose /.test((err as Error).message) ? (err as Error).message : errorMessage(err)
+    Astro.response.status = 400
+  }
+}
+
+const [employees, templates] = await Promise.all([
+  employeeChoices(payload),
+  payload.find({ collection: 'certificate-templates', where: { active: { equals: true } }, sort: ['sortOrder', 'name'], pagination: false, depth: 0, user, overrideAccess: false }),
+])
+if (!values.template && templates.docs[0]) values.template = templates.docs[0].id
+---
+<App title="Issue certificate" heading="Issue a certificate" back={{ href: '/certificates', label: 'Certificates' }} description="Choose the employee and the purpose. The preview shows exactly what will be printed.">
+  <Fragment set:html={`<style>${certificateCss()}</style>`} />
+  {
+    error && (
+      <div class="mb-4 flex items-start gap-3 rounded-xl border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">
+        <Icon name="alert" class="mt-0.5 size-4 shrink-0" />
+        <span>{error}</span>
+      </div>
+    )
+  }
+  <form method="post" class="grid gap-6 xl:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]" id="issue-form">
+    <div class="space-y-5">
+      <section class="card space-y-4 p-5">
+        <h2 class="font-semibold">1. Employee</h2>
+        <div>
+          <label class="label" for="employee">Employee</label>
+          <input type="search" class="input mb-2" placeholder="Type to filter employees…" aria-label="Filter employee list" data-filter-for="employee" />
+          <select class="input" id="employee" name="employee" required size="6">
+            {employees.map((e) => <option value={e.value} selected={e.value === values.employee}>{e.label}</option>)}
+          </select>
+        </div>
+      </section>
+
+      <section class="card space-y-3 p-5">
+        <h2 class="font-semibold">2. Certificate</h2>
+        {
+          templates.docs.length === 0 ? (
+            <p class="text-sm text-muted">No active templates. <a class="text-primary-ink underline" href="/certificates/templates">Create or activate one</a>.</p>
+          ) : (
+            <fieldset class="space-y-2">
+              <legend class="sr-only">Certificate template</legend>
+              {templates.docs.map((t) => (
+                <label class="flex cursor-pointer gap-3 rounded-lg border border-line p-3 transition-colors hover:border-line-strong has-[:checked]:border-primary-ink has-[:checked]:bg-primary-soft">
+                  <input type="radio" name="template" value={t.id} checked={t.id === values.template} class="mt-1 accent-[var(--primary)]" required />
+                  <span class="min-w-0">
+                    <span class="block text-sm font-medium">{t.name}</span>
+                    {t.description && <span class="block text-xs text-muted">{t.description}</span>}
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+          )
+        }
+      </section>
+
+      <section class="card space-y-4 p-5">
+        <h2 class="font-semibold">3. Details</h2>
+        <div>
+          <label class="label" for="purpose">Purpose / requested for</label>
+          <input class="input" id="purpose" name="purpose" maxlength="200" value={values.purpose} placeholder="e.g. housing loan application with Pag-IBIG" />
+          <p class="field-help">Fills {'{{purpose}}'}. Leave blank for “whatever legal purpose it may serve”.</p>
+        </div>
+        <div>
+          <label class="label" for="issuedDate">Date issued</label>
+          <input class="input" id="issuedDate" name="issuedDate" type="date" required value={values.issuedDate} />
+        </div>
+        <button class="btn-primary w-full" disabled={templates.docs.length === 0}><Icon name="award" /> Issue certificate</button>
+        <p class="text-xs text-muted">A control number is assigned when you issue it. The certificate is saved and can be reprinted anytime.</p>
+      </section>
+    </div>
+
+    <section class="min-w-0" aria-labelledby="preview-title">
+      <div class="mb-2 flex items-center justify-between gap-3">
+        <h2 id="preview-title" class="text-sm font-semibold">Preview</h2>
+        <span class="text-xs text-muted" data-preview-status aria-live="polite"></span>
+      </div>
+      <div class="rounded-xl border border-line bg-surface-2 p-3 sm:p-6" data-preview-box>
+        <div class="mx-auto origin-top-left" data-preview-scale>
+          <article class="cert-paper-preview bg-white text-[#111] shadow-elev-2" data-preview-paper></article>
+        </div>
+      </div>
+    </section>
+  </form>
+</App>
+
+<script>
+  const form = document.getElementById('issue-form') as HTMLFormElement
+  const paper = document.querySelector<HTMLElement>('[data-preview-paper]')!
+  const scaleBox = document.querySelector<HTMLElement>('[data-preview-scale]')!
+  const box = document.querySelector<HTMLElement>('[data-preview-box]')!
+  const status = document.querySelector<HTMLElement>('[data-preview-status]')!
+  const SIZES: Record<string, [number, number]> = { A4: [794, 1123], Letter: [816, 1056], Legal: [816, 1344] }
+  const MARGINS: Record<string, number> = { narrow: 50, normal: 72, wide: 96 }
+
+  // Employee list filter
+  document.querySelectorAll<HTMLInputElement>('[data-filter-for]').forEach((input) => {
+    const select = document.getElementById(input.dataset.filterFor!) as HTMLSelectElement
+    const all = [...select.options]
+    input.addEventListener('input', () => {
+      const q = input.value.toLowerCase()
+      for (const o of all) o.hidden = Boolean(q) && !o.text.toLowerCase().includes(q)
+    })
+  })
+
+  const fit = () => {
+    const w = Number(paper.dataset.w || 794)
+    const h = Number(paper.dataset.h || 1123)
+    const scale = Math.min(1, (box.clientWidth - 24) / w)
+    scaleBox.style.width = `${w * scale}px`
+    scaleBox.style.height = `${h * scale}px`
+    paper.style.transform = `scale(${scale})`
+    paper.style.transformOrigin = 'top left'
+  }
+
+  let timer: number | undefined
+  let seq = 0
+  const refresh = () => {
+    clearTimeout(timer)
+    timer = window.setTimeout(async () => {
+      const fd = new FormData(form)
+      const qs = new URLSearchParams({
+        employee: String(fd.get('employee') ?? ''),
+        template: String(fd.get('template') ?? ''),
+        purpose: String(fd.get('purpose') ?? ''),
+        issuedDate: String(fd.get('issuedDate') ?? ''),
+      })
+      const mine = ++seq
+      status.textContent = 'Updating…'
+      const res = await fetch(`/certificates/preview?${qs}`, { credentials: 'same-origin' })
+      if (mine !== seq) return
+      if (res.status === 204) {
+        paper.innerHTML = ''
+        status.textContent = 'Choose an employee and a certificate to see the preview.'
+        return
+      }
+      const body = await res.text()
+      if (!res.ok) {
+        paper.textContent = ''
+        status.textContent = body || 'Preview unavailable.'
+        return
+      }
+      const [w, h] = SIZES[res.headers.get('X-Paper') ?? 'A4'] ?? SIZES.A4!
+      const m = MARGINS[res.headers.get('X-Margin') ?? 'normal'] ?? 72
+      paper.dataset.w = String(w)
+      paper.dataset.h = String(h)
+      paper.style.width = `${w}px`
+      paper.style.minHeight = `${h}px`
+      paper.style.padding = `${m}pt`
+      // Safe: the server renders the certificate with every value HTML-escaped.
+      paper.innerHTML = body
+      status.textContent = 'Control number is assigned when issued.'
+      fit()
+    }, 250)
+  }
+  form.addEventListener('input', refresh)
+  form.addEventListener('change', refresh)
+  window.addEventListener('resize', fit)
+  refresh()
+</script>

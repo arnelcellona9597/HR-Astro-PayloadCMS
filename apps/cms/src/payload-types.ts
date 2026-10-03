@@ -87,6 +87,8 @@ export interface Config {
     'audit-logs': AuditLog;
     'import-jobs': ImportJob;
     'login-challenges': LoginChallenge;
+    'certificate-templates': CertificateTemplate;
+    certificates: Certificate;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
@@ -114,6 +116,8 @@ export interface Config {
     'audit-logs': AuditLogsSelect<false> | AuditLogsSelect<true>;
     'import-jobs': ImportJobsSelect<false> | ImportJobsSelect<true>;
     'login-challenges': LoginChallengesSelect<false> | LoginChallengesSelect<true>;
+    'certificate-templates': CertificateTemplatesSelect<false> | CertificateTemplatesSelect<true>;
+    certificates: CertificatesSelect<false> | CertificatesSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
@@ -741,6 +745,75 @@ export interface LoginChallenge {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "certificate-templates".
+ */
+export interface CertificateTemplate {
+  id: number;
+  name: string;
+  description?: string | null;
+  /**
+   * Letters/digits, e.g. COE → COE-2026-0001.
+   */
+  prefix: string;
+  paperSize: 'A4' | 'Letter' | 'Legal';
+  font: 'serif' | 'sans';
+  margin: 'narrow' | 'normal' | 'wide';
+  /**
+   * Edited in the app: Certificates → Templates.
+   */
+  blocks:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  /**
+   * Inactive templates cannot be used for new certificates.
+   */
+  active?: boolean | null;
+  sortOrder?: number | null;
+  /**
+   * Set on the built-in templates.
+   */
+  key?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "certificates".
+ */
+export interface Certificate {
+  id: number;
+  controlNumber?: string | null;
+  template: number | CertificateTemplate;
+  employee: number | Employee;
+  purpose?: string | null;
+  issuedDate: string;
+  templateName?: string | null;
+  employeeName?: string | null;
+  content?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  issuedBy?: (number | null) | User;
+  issuedByName?: string | null;
+  status: 'Valid' | 'Void';
+  voidReason?: string | null;
+  voidedAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "payload-kv".
  */
 export interface PayloadKv {
@@ -842,6 +915,14 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'login-challenges';
         value: number | LoginChallenge;
+      } | null)
+    | ({
+        relationTo: 'certificate-templates';
+        value: number | CertificateTemplate;
+      } | null)
+    | ({
+        relationTo: 'certificates';
+        value: number | Certificate;
       } | null);
   globalSlug?: string | null;
   user: {
@@ -1307,6 +1388,45 @@ export interface LoginChallengesSelect<T extends boolean = true> {
   sendCount?: T;
   lastSentAt?: T;
   ip?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "certificate-templates_select".
+ */
+export interface CertificateTemplatesSelect<T extends boolean = true> {
+  name?: T;
+  description?: T;
+  prefix?: T;
+  paperSize?: T;
+  font?: T;
+  margin?: T;
+  blocks?: T;
+  active?: T;
+  sortOrder?: T;
+  key?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "certificates_select".
+ */
+export interface CertificatesSelect<T extends boolean = true> {
+  controlNumber?: T;
+  template?: T;
+  employee?: T;
+  purpose?: T;
+  issuedDate?: T;
+  templateName?: T;
+  employeeName?: T;
+  content?: T;
+  issuedBy?: T;
+  issuedByName?: T;
+  status?: T;
+  voidReason?: T;
+  voidedAt?: T;
   updatedAt?: T;
   createdAt?: T;
 }

@@ -1,0 +1,73 @@
+---
+// One certificate on paper (A4 / Letter / Legal at real size). Used by the certificate page, the
+// print view and the issue preview. The text comes from the shared renderer, which escapes it.
+import { type CertBlock, type CertFont, type CertMargin, certificateCss, MARGIN_POINTS, type PaperSize, renderCertificateHtml } from '@hr/shared/certificates'
+
+interface Props {
+  blocks: CertBlock[]
+  paperSize: PaperSize
+  font: CertFont
+  margin: CertMargin
+  companyName: string
+  logoId?: number | null
+  values?: Record<string, string>
+  void?: boolean
+  /** Print view: the page margin comes from @page, so the sheet has no padding when printed. */
+  print?: boolean
+}
+const { blocks, paperSize, font, margin, companyName, logoId, values, void: isVoid, print } = Astro.props
+const size = { A4: ['210mm', '297mm'], Letter: ['8.5in', '11in'], Legal: ['8.5in', '14in'] }[paperSize] ?? ['210mm', '297mm']
+const html = renderCertificateHtml(blocks, { values, companyName, logoUrl: logoId ? `/files/${logoId}` : null, font })
+---
+<Fragment set:html={`<style>${certificateCss()}</style>`} />
+<div class="cert-frame">
+  <article
+    class:list={['sheet cert-paper', print && 'cert-print']}
+    style={`width:${size[0]};min-height:${size[1]};padding:${MARGIN_POINTS[margin] ?? 72}pt`}
+    aria-label="Certificate"
+  >
+    <Fragment set:html={html} />
+    {isVoid && <div class="cert-void" aria-label="This certificate is void">VOID</div>}
+  </article>
+</div>
+
+<style is:global>
+  .cert-frame {
+    overflow-x: auto;
+    padding: 4px;
+  }
+  .cert-paper {
+    position: relative;
+    margin: 0 auto;
+    background: #fff;
+    color: #111;
+    box-shadow:
+      0 1px 3px rgb(15 20 28 / 0.08),
+      0 12px 32px -12px rgb(15 20 28 / 0.18);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .cert-void {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: 700 140pt/1 'Times New Roman', serif;
+    color: rgb(200 16 46 / 0.16);
+    transform: rotate(-35deg);
+    pointer-events: none;
+  }
+  @media print {
+    .cert-frame {
+      overflow: visible;
+      padding: 0;
+    }
+    .cert-paper.cert-print {
+      width: auto !important;
+      min-height: 0 !important;
+      padding: 0 !important;
+      box-shadow: none !important;
+    }
+  }
+</style>

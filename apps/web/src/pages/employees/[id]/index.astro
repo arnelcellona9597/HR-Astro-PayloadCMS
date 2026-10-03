@@ -21,7 +21,7 @@ if (Astro.request.method === 'POST') {
 const canManage = Boolean(user)
 const year = Number(todayYmd().slice(0, 4))
 const byEmployee = { employee: { equals: id } }
-const [leaves, leaveSettings, itr, sworn, pds, ipcr, history] = await Promise.all([
+const [leaves, leaveSettings, itr, sworn, pds, ipcr, history, certificates] = await Promise.all([
   payload.find({ collection: 'wellness-leaves', where: byEmployee, sort: '-inclusiveDateFrom', limit: 50, depth: 0, user, overrideAccess: false }),
   payload.findGlobal({ slug: 'leave-settings', user, overrideAccess: false }),
   payload.find({ collection: 'itr-submissions', where: byEmployee, sort: '-year', limit: 20, depth: 0, user, overrideAccess: false }),
@@ -39,6 +39,7 @@ const [leaves, leaveSettings, itr, sworn, pds, ipcr, history] = await Promise.al
         overrideAccess: false,
       })
     : null,
+  payload.find({ collection: 'certificates', where: byEmployee, sort: '-createdAt', limit: 10, depth: 0, user, overrideAccess: false }),
 ])
 
 const allowance = allowanceForYear(leaveSettings, year)
@@ -62,6 +63,7 @@ const has = (docs: { year: number; dateSubmitted?: string | null }[], y: number)
   <Fragment slot="actions">
     <a class="btn-secondary" href={`/messages/new?employees=${id}`}><Icon name="mail" /> Email employee</a>
     <a class="btn-secondary" href={`/leave/new?employee=${id}`}><Icon name="calendar" /> File leave</a>
+    <a class="btn-secondary" href={`/certificates/new?employee=${id}`}><Icon name="award" /> Issue certificate</a>
     <a class="btn-primary" href={`/employees/${id}/edit`}><Icon name="edit" /> Edit</a>
     {
       canManage && (
@@ -140,6 +142,32 @@ const has = (docs: { year: number; dateSubmitted?: string | null }[], y: number)
                 ))}
               </tbody>
             </table></div>
+          )
+        }
+      </section>
+
+      <section class="card overflow-hidden">
+        <header class="flex items-center justify-between p-4">
+          <h2 class="text-sm font-semibold">Certificates</h2>
+          <a href={`/certificates/new?employee=${id}`} class="text-xs text-primary-ink hover:underline">Issue certificate</a>
+        </header>
+        {
+          certificates.docs.length === 0 ? (
+            <p class="px-4 pb-4 text-sm text-muted">None issued yet.</p>
+          ) : (
+            <ul class="divide-y divide-line border-t border-line">
+              {certificates.docs.map((c) => (
+                <li>
+                  <a href={`/certificates/${c.id}`} class="flex items-center justify-between gap-3 px-4 py-2.5 text-sm transition-colors hover:bg-surface-2">
+                    <span class="min-w-0">
+                      <span class="block font-medium tabular">{c.controlNumber}</span>
+                      <span class="block truncate text-xs text-muted">{c.templateName} · {formatDate(c.issuedDate)}</span>
+                    </span>
+                    <span class={c.status === 'Void' ? 'badge-danger' : 'badge-success'}>{c.status}</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
           )
         }
       </section>

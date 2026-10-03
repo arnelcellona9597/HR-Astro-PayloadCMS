@@ -29,6 +29,7 @@ import { SiteSettings } from './globals/SiteSettings'
 import { SmtpSettings } from './globals/SmtpSettings'
 import { installWriteLock } from './server/dbLock'
 import { ensureDefaults } from './server/defaults'
+import { Certificates, CertificateTemplates } from './collections/certificates'
 import { startQueueWorker } from './server/mailer'
 import { migrations } from './migrations'
 
@@ -66,6 +67,8 @@ export default buildConfig({
     AuditLogs,
     ImportJobs,
     LoginChallenges,
+    CertificateTemplates,
+    Certificates,
   ].map(withRestLimits),
   globals: [SiteSettings, LeaveSettings, NotificationSettings, PayslipSettings, SmtpSettings],
   // Relationship population depth is never needed beyond 3 levels; limits expensive REST queries.

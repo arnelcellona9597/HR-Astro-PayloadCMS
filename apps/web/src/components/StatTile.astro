@@ -8,7 +8,7 @@ interface Props {
 }
 const { label, value, note, href, tone = 'neutral' } = Astro.props
 const Tag = href ? 'a' : 'div'
-const dot = { neutral: 'bg-muted', success: 'bg-success', warning: 'bg-warning', danger: 'bg-danger', primary: 'bg-primary' }[tone]
+const dot = { neutral: 'bg-muted', success: 'bg-success', warning: 'bg-[var(--brand-warning)]', danger: 'bg-danger', primary: 'bg-primary' }[tone]
 ---
 <Tag href={href} class:list={['card block p-4', href && 'transition-colors hover:border-primary-ink']}>
   <p class="flex items-center gap-2 text-xs font-medium text-muted">

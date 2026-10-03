@@ -22,12 +22,6 @@ const isSystemAdmin = role === 'system-admin'
 const flash = takeFlash(Astro.cookies)
 const denied = Astro.url.searchParams.get('denied') === '1'
 
-let pendingUsers = 0
-if (isSystemAdmin) {
-  pendingUsers = (
-    await payload.count({ collection: 'users', where: { and: [{ status: { equals: 'pending' } }, { emailVerified: { equals: true } }] }, overrideAccess: true })
-  ).totalDocs
-}
 
 type NavItem = { href: string; label: string; icon: string; show?: boolean; badge?: number }
 const main: NavItem[] = [
@@ -42,9 +36,10 @@ const main: NavItem[] = [
   { href: '/data', label: 'Import / Export', icon: 'sheet' },
 ]
 const admin: NavItem[] = [
-  { href: '/users', label: 'HR Accounts', icon: 'shield', show: isSystemAdmin, badge: pendingUsers },
+  { href: '/users', label: 'HR Accounts', icon: 'shield', show: isSystemAdmin },
   { href: '/settings', label: 'Branding & Theme', icon: 'settings', show: true },
   { href: '/settings/notifications', label: 'Email Settings', icon: 'send', show: true },
+  { href: '/settings/email-server', label: 'Email Server (SMTP)', icon: 'mail', show: isSystemAdmin },
   { href: '/audit', label: 'Audit Log', icon: 'history', show: true },
 ].filter((i) => i.show)
 
@@ -196,7 +191,7 @@ const company = settings?.companyName ?? 'HR Management System'
           mailWarning && (
             <div class="mb-4 flex items-start gap-2 rounded-lg border border-danger bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">
               <Icon name="alert" class="mt-0.5 size-4 shrink-0" />
-              <span>{mailWarning} <a class="font-medium underline" href="/settings/notifications">Check email settings</a></span>
+              <span>{mailWarning} {isSystemAdmin && <a class="font-medium underline" href="/settings/email-server">Open email server settings</a>}</span>
             </div>
           )
         }

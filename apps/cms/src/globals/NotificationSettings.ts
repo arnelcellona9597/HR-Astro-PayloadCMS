@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import type { GlobalConfig } from 'payload'
 
-import { isStaff } from '../access'
+import { isStaff, systemAdminField } from '../access'
 import { diffDocs, writeAudit } from '../hooks/audit'
 
 export const NotificationSettings: GlobalConfig = {
@@ -32,14 +32,16 @@ export const NotificationSettings: GlobalConfig = {
     },
     { name: 'replyTo', label: 'Reply-to address', type: 'email', admin: { description: 'Where replies go (e.g. the HR office mailbox). Leave blank to use the sender address.' } },
     { name: 'footer', label: 'Email footer', type: 'textarea', defaultValue: 'This is an automated message from the HR office.' },
+    // System-maintained fields: nobody can write them through the API (the server uses overrideAccess).
     {
       name: 'queueKey',
       type: 'text',
-      admin: { readOnly: true, description: 'Secret used by the cron job that sends queued emails (/internal/queue?key=…).' },
+      access: { read: systemAdminField, create: () => false, update: () => false },
+      admin: { readOnly: true, description: 'Secret for the cron job that sends queued emails (X-Queue-Key header).' },
     },
-    { name: 'smtpLastError', type: 'textarea', admin: { readOnly: true } },
-    { name: 'smtpLastErrorAt', type: 'date', admin: { readOnly: true } },
-    { name: 'smtpLastOkAt', type: 'date', admin: { readOnly: true } },
+    { name: 'smtpLastError', type: 'textarea', access: { create: () => false, update: () => false }, admin: { readOnly: true } },
+    { name: 'smtpLastErrorAt', type: 'date', access: { create: () => false, update: () => false }, admin: { readOnly: true } },
+    { name: 'smtpLastOkAt', type: 'date', access: { create: () => false, update: () => false }, admin: { readOnly: true } },
   ],
   hooks: {
     beforeChange: [

@@ -10,6 +10,8 @@ import type { Payload, PayloadRequest, Where } from 'payload'
 
 import { loadBrand, renderEmail, type Brand } from '../email/layout'
 import { DATA_DIR } from '../env'
+import { withWriteLock } from './dbLock'
+import { UserError } from './errors'
 import { leaveUsageByEmployee } from './stats'
 
 type Row = Record<string, unknown>
@@ -53,8 +55,11 @@ export type QueueInput = {
 export const MAX_RECIPIENTS = 2000
 const MAX_ATTEMPTS = 3
 
-export function emailConfigured(): boolean {
-  return Boolean(process.env.SMTP_HOST) || process.env.HR_EMAIL_CAPTURE === '1'
+/** True when emails can be sent: SMTP settings saved in the database (or the dev/test capture). */
+export async function emailConfigured(payload: Payload): Promise<boolean> {
+  if (process.env.HR_EMAIL_CAPTURE === '1') return true
+  const { loadSmtpConfig } = await import('../email/dbAdapter')
+  return Boolean(await loadSmtpConfig(payload))
 }
 
 async function all<T extends Row>(payload: Payload, q: SQL): Promise<T[]> {
@@ -76,7 +81,7 @@ export async function prepareMessage(payload: Payload, input: QueueInput): Promi
   const bad = unknownPlaceholders(`${input.subject}\n${input.body}`, allowed)
   if (bad.length) {
     const ctx = CONTEXT_MERGE_FIELDS.filter((f) => bad.includes(f.name)).map((f) => `{{${f.name}}}`)
-    throw new Error(
+    throw new UserError(
       `Unknown placeholder(s): ${bad.map((b) => `{{${b}}}`).join(', ')}${ctx.length ? ` (${ctx.join(', ')} only work in automatic emails)` : ''}`,
     )
   }
@@ -111,7 +116,7 @@ export async function prepareMessage(payload: Payload, input: QueueInput): Promi
     for (const u of res.docs) specs.push({ userId: u.id })
   }
   for (const email of a.emails ?? []) specs.push({ email: email.trim() })
-  if (!specs.length) throw new Error('Choose at least one recipient.')
+  if (!specs.length) throw new UserError('Choose at least one recipient.')
 
   // 2. Load the people behind the specs
   const empIds = [...new Set(specs.map((s) => s.employeeId).filter((x): x is number => Boolean(x)))]
@@ -161,7 +166,7 @@ export async function prepareMessage(payload: Payload, input: QueueInput): Promi
     if (email) seen.add(email)
     prepared.push(p)
   }
-  if (prepared.length > MAX_RECIPIENTS) throw new Error(`Too many recipients (${prepared.length}). The limit is ${MAX_RECIPIENTS} per message.`)
+  if (prepared.length > MAX_RECIPIENTS) throw new UserError(`Too many recipients (${prepared.length}). The limit is ${MAX_RECIPIENTS} per message.`)
   return prepared
 }
 
@@ -283,20 +288,24 @@ export async function processQueue(payload: Payload, max = 25): Promise<{ sent: 
   try {
     const now = new Date().toISOString()
     // Release rows stuck in "sending" (e.g. the process stopped mid-send) after 10 minutes.
-    await all(
-      payload,
-      sql`UPDATE message_recipients SET status = 'queued' WHERE status = 'sending' AND updated_at < ${new Date(Date.now() - 10 * 60_000).toISOString()} RETURNING id`,
+    await withWriteLock(() =>
+      all(
+        payload,
+        sql`UPDATE message_recipients SET status = 'queued' WHERE status = 'sending' AND updated_at < ${new Date(Date.now() - 10 * 60_000).toISOString()} RETURNING id`,
+      ),
     )
     const settings = await payload.findGlobal({ slug: 'notification-settings', overrideAccess: true })
     const hourAgo = new Date(Date.now() - 3_600_000).toISOString()
     const [{ n }] = await all<{ n: number }>(payload, sql`SELECT COUNT(*) AS n FROM message_recipients WHERE status = 'sent' AND sent_at > ${hourAgo}`)
     const budget = Math.min(max, (settings.hourlyLimit ?? 100) - Number(n))
     if (budget > 0) {
-      const claimed = await all<{ id: number }>(
-        payload,
-        sql`UPDATE message_recipients SET status = 'sending', updated_at = ${now}
+      const claimed = await withWriteLock(() =>
+        all<{ id: number }>(
+          payload,
+          sql`UPDATE message_recipients SET status = 'sending', updated_at = ${now}
             WHERE id IN (SELECT id FROM message_recipients WHERE status = 'queued' AND (next_attempt_at IS NULL OR next_attempt_at <= ${now}) ORDER BY id LIMIT ${budget})
             RETURNING id`,
+        ),
       )
       let brand: Brand | null = null
       const touched = new Set<number>()
@@ -375,9 +384,11 @@ export async function rollUp(payload: Payload, messageId: number) {
 
 /** Puts failed recipients of a message back in the queue. */
 export async function retryFailed(payload: Payload, messageId: number): Promise<number> {
-  const rows = await all<{ id: number }>(
-    payload,
-    sql`UPDATE message_recipients SET status = 'queued', attempts = 0, next_attempt_at = NULL WHERE message_id = ${messageId} AND status = 'failed' RETURNING id`,
+  const rows = await withWriteLock(() =>
+    all<{ id: number }>(
+      payload,
+      sql`UPDATE message_recipients SET status = 'queued', attempts = 0, next_attempt_at = NULL WHERE message_id = ${messageId} AND status = 'failed' RETURNING id`,
+    ),
   )
   await rollUp(payload, messageId)
   setTimeout(() => void drainQueue(payload).catch(() => {}), 200).unref?.()

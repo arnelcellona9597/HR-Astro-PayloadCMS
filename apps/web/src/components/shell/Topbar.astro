@@ -7,7 +7,7 @@ import UserMenu from './UserMenu.astro'
 interface Props {
   crumbs: { href?: string; label: string }[]
   unread: number
-  user: { name: string; email: string; role?: 'system-admin' | 'hr-staff' }
+  user: { name: string; email: string; role?: 'system-admin' | 'hr-staff'; avatarId?: number | null }
   prefs: { collapsed: boolean; right: boolean; compact: boolean }
 }
 const { crumbs, unread, user, prefs } = Astro.props
@@ -93,6 +93,6 @@ const q = Astro.url.pathname === '/employees' ? (Astro.url.searchParams.get('q')
     </a>
 
     <span class="mx-1 hidden h-5 w-px bg-line sm:block" aria-hidden="true"></span>
-    <UserMenu name={user.name} email={user.email} role={user.role} prefs={prefs} />
+    <UserMenu name={user.name} email={user.email} role={user.role} avatarId={user.avatarId} prefs={prefs} />
   </div>
 </header>

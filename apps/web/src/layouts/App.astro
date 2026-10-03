@@ -3,6 +3,7 @@ import Icon from '../components/Icon.astro'
 import Sidebar from '../components/shell/Sidebar.astro'
 import Topbar from '../components/shell/Topbar.astro'
 import { takeFlash } from '../lib/flash'
+import { relId } from '../lib/format'
 import { navGroups, sectionFor } from '../lib/nav'
 import Base from './Base.astro'
 
@@ -61,7 +62,7 @@ crumbs.push({ label: path === '/' ? 'Dashboard' : section?.href === path ? secti
     />
 
     <div class="flex min-w-0 flex-1 flex-col">
-      <Topbar crumbs={crumbs} unread={unreadNotifications} user={{ name: user?.name ?? '', email: user?.email ?? '', role }} prefs={prefs} />
+      <Topbar crumbs={crumbs} unread={unreadNotifications} user={{ name: user?.name ?? '', email: user?.email ?? '', role, avatarId: relId(user?.avatar) }} prefs={prefs} />
 
       <main id="content" tabindex="-1" class="mx-auto w-full max-w-[1440px] flex-1 px-4 py-6 outline-none sm:px-6 lg:px-8 lg:py-8">
         {

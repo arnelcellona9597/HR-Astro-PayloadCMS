@@ -81,6 +81,14 @@ export const Users: CollectionConfig = {
     },
     { name: 'name', label: 'Full Name', type: 'text', required: true, maxLength: 120 },
     {
+      // Shown in the app's header and account menu. Like every upload it is private to signed-in staff.
+      name: 'avatar',
+      label: 'Profile picture',
+      type: 'upload',
+      relationTo: 'media',
+      admin: { description: 'PNG, JPG, WEBP or GIF image, up to 2 MB. Change it from “My account”.' },
+    },
+    {
       name: 'role',
       type: 'select',
       required: true,
@@ -140,6 +148,15 @@ export const Users: CollectionConfig = {
     ],
     beforeChange: [
       async ({ data, operation, originalDoc, req }) => {
+        // A profile picture must be an image, never e.g. a scanned document picked by id.
+        const avatarId = typeof data.avatar === 'object' && data.avatar ? data.avatar.id : data.avatar
+        const previousId = typeof originalDoc?.avatar === 'object' && originalDoc?.avatar ? originalDoc.avatar.id : originalDoc?.avatar
+        if (avatarId && avatarId !== previousId) {
+          const media = await req.payload.findByID({ collection: 'media', id: avatarId, depth: 0, overrideAccess: true, req, disableErrors: true })
+          if (!media || !/^image\/(png|jpeg|webp|gif)$/.test(media.mimeType ?? '')) {
+            throw new APIError('The profile picture must be a PNG, JPG, WEBP or GIF image.', 400, undefined, true)
+          }
+        }
         // A new address must be confirmed again with an emailed code.
         if (operation === 'update' && data.email && originalDoc?.email && data.email.toLowerCase() !== originalDoc.email.toLowerCase()) {
           data.emailVerified = false

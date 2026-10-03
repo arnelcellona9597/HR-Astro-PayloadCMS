@@ -308,6 +308,38 @@ test('messages: send an announcement to a branch group', async ({ page }) => {
   expect(mail.text).not.toContain('{{')
 })
 
+test('HR Staff change their own profile picture; it shows in the header and HR accounts list', async ({ page, browser }) => {
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
+  await login(page, STAFF)
+  await page.goto('/profile')
+  await page.setInputFiles('[data-avatar-input]', { name: 'me.png', mimeType: 'image/png', buffer: PNG })
+  await expect(page.locator('[data-avatar-preview]')).toBeVisible()
+  await page.getByRole('button', { name: 'Save picture' }).click()
+  await expect(page.getByText('Profile picture updated.')).toBeVisible()
+  const headerImg = page.locator('#user-menu-button img')
+  await expect(headerImg).toHaveAttribute('src', /^\/files\/\d+$/)
+  expect(await headerImg.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true)
+
+  // A file that only pretends to be an image is refused.
+  await page.setInputFiles('[data-avatar-input]', { name: 'fake.png', mimeType: 'image/png', buffer: Buffer.from('%PDF-1.4 not an image') })
+  await page.getByRole('button', { name: 'Save picture' }).click()
+  await expect(page.getByRole('alert')).toContainText(/file type isn't allowed/)
+
+  // System Admins see it in the HR accounts list.
+  const adminCtx = await browser.newContext()
+  const admin = await adminCtx.newPage()
+  await login(admin, ADMIN)
+  await admin.goto('/users')
+  await expect(admin.locator('tr', { hasText: STAFF.email }).locator('img')).toHaveAttribute('src', /^\/files\/\d+$/)
+  await adminCtx.close()
+
+  await page.goto('/profile')
+  page.once('dialog', (d) => d.accept())
+  await page.getByRole('button', { name: 'Remove picture' }).click()
+  await expect(page.getByText('Profile picture removed.')).toBeVisible()
+  await expect(page.locator('#user-menu-button img')).toHaveCount(0)
+})
+
 test('app shell: collapsible sidebar, right side, compact header, account menu and log out', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', (e) => errors.push(e.message))
@@ -378,4 +410,22 @@ test('pages fit a phone screen without sideways scrolling', async ({ browser }) 
   await page.locator('#user-menu-button').click()
   await expect(page.getByRole('menuitem', { name: 'Log out' })).toBeVisible()
   await ctx.close()
+})
+
+test('My account: change password with the current one, then sign in with the new one', async ({ page }) => {
+  await login(page, STAFF)
+  await page.goto('/profile')
+  await page.fill('#current', 'wrong-password-1')
+  await page.fill('#password', 'N3wStaffPassword!')
+  await page.fill('#confirm', 'N3wStaffPassword!')
+  await page.getByRole('button', { name: 'Change password' }).click()
+  await expect(page.getByRole('alert')).toContainText('Your current password is incorrect.')
+
+  await page.fill('#current', STAFF.password)
+  await page.fill('#password', 'N3wStaffPassword!')
+  await page.fill('#confirm', 'N3wStaffPassword!')
+  await page.getByRole('button', { name: 'Change password' }).click()
+  await page.waitForURL(/\/login\?notice=password/)
+  await login(page, { email: STAFF.email, password: 'N3wStaffPassword!' })
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
 })

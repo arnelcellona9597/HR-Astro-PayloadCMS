@@ -1,6 +1,6 @@
 import type { CollectionConfig, Where } from 'payload'
 
-import { isApproved, isStaff } from '../access'
+import { isApproved, isStaff, systemAdminField } from '../access'
 import { MEDIA_DIR } from '../env'
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -33,6 +33,8 @@ export const Media: CollectionConfig = {
       label: 'Public (visible without login)',
       type: 'checkbox',
       defaultValue: false,
+      // Making a file public exposes it without login: System Admins only (the logo is handled by the system).
+      access: { create: systemAdminField, update: systemAdminField },
       admin: { position: 'sidebar' },
     },
   ],

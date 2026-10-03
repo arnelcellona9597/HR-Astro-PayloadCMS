@@ -41,7 +41,7 @@ const state = await handleSave(Astro, {
   },
   prepare: async (data, fd) => {
     const photo = fd.get('photo') as File | null
-    const err = checkImage(photo)
+    const err = await checkImage(photo)
     if (err) return { photo: err }
     if (photo && photo.size) data.profilePicture = await saveUpload(payload, user, photo, `Photo of ${data.firstName} ${data.lastName}`)
   },

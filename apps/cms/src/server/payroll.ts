@@ -10,6 +10,7 @@ import { PDFDocument, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
 
 import type { Payslip, PayrollPeriod, PayslipSetting } from '../payload-types'
 import { DEFAULT_DEDUCTIONS, DEFAULT_EARNINGS } from '../globals/PayslipSettings'
+import { UserError } from './errors'
 import { queueMessage, templateByKey } from './mailer'
 
 type User = { id: number; name?: string | null; email?: string | null }
@@ -175,11 +176,11 @@ async function payslipRecipients(payload: Payload, slips: Payslip[], period: Pay
 /** Marks the period Released and (if enabled) emails every employee their payslip PDF. */
 export async function releasePeriod(payload: Payload, user: User, periodId: number, opts: { notify: boolean }) {
   const period = await payload.findByID({ collection: 'payroll-periods', id: periodId, depth: 0, overrideAccess: true })
-  if (period.status === 'Released') throw new Error('This payroll period has already been released.')
+  if (period.status === 'Released') throw new UserError('This payroll period has already been released.')
   const slips = await payload.find({ collection: 'payslips', where: { period: { equals: periodId } }, pagination: false, depth: 0, overrideAccess: true })
-  if (!slips.docs.length) throw new Error('There are no payslips in this period yet.')
+  if (!slips.docs.length) throw new UserError('There are no payslips in this period yet.')
   const zero = slips.docs.filter((s) => !s.grossPay)
-  if (zero.length) throw new Error(`${zero.length} payslip(s) have no earnings (gross pay ₱0.00). Fill them in or remove them first.`)
+  if (zero.length) throw new UserError(`${zero.length} payslip(s) have no earnings (gross pay ₱0.00). Fill them in or remove them first.`)
 
   await payload.update({
     collection: 'payroll-periods',

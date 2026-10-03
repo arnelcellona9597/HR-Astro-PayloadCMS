@@ -20,7 +20,7 @@ const state = await handleSave(Astro, {
   initial: docToValues(emp as never, EMPLOYEES.fields),
   prepare: async (data, fd) => {
     const file = fd.get('photo') as File | null
-    const err = checkImage(file)
+    const err = await checkImage(file)
     if (err) return { photo: err }
     if (file && file.size) data.profilePicture = await saveUpload(payload, user, file, `Photo of ${data.firstName} ${data.lastName}`)
     else if (fd.get('removePhoto') === 'on') data.profilePicture = null

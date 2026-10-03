@@ -33,11 +33,8 @@ export async function logout(payload: Payload, user: User | null, cookies: Astro
   clearAuthCookie(cookies)
 }
 
-/** Only allow redirects back into this site after login. */
-export function safeNext(next: string | null | undefined): string {
-  if (!next || !next.startsWith('/') || next.startsWith('//') || next.startsWith('/login')) return '/'
-  return next
-}
+export { safeNext } from '@hr/shared/redirect'
+import { safeNext } from '@hr/shared/redirect'
 
 /** Pending email-code check (2FA). Holds only a random id; the session token stays on the server. */
 export const CHALLENGE_COOKIE = 'hr-2fa'
@@ -59,8 +56,16 @@ export function clearChallengeCookie(cookies: AstroCookies) {
   cookies.delete(CHALLENGE_COOKIE, { path: '/' })
 }
 
+/** Client address as appended by our own proxy (the last X-Forwarded-For entry). */
 export function clientIp(request: Request): string | undefined {
-  return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || undefined
+  return (
+    request.headers
+      .get('x-forwarded-for')
+      ?.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .at(-1) || undefined
+  )
 }
 
 /** Closes the server-side session behind a token we never handed to a browser. */

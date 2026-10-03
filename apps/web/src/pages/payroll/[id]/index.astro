@@ -6,7 +6,7 @@ import EmptyState from '../../../components/EmptyState.astro'
 import Icon from '../../../components/Icon.astro'
 import App from '../../../layouts/App.astro'
 import { branchChoices } from '../../../lib/choices'
-import { toFormErrors } from '../../../lib/errors'
+import { errorMessage, UserError } from '../../../lib/errors'
 import { setFlash } from '../../../lib/flash'
 
 const { payload, user } = Astro.locals
@@ -57,7 +57,7 @@ if (Astro.request.method === 'POST') {
       return Astro.redirect(`/payroll/${id}`)
     }
     if (action === 'delete-payslips') {
-      if (period.status === 'Released') throw new Error('Released payroll cannot be cleared.')
+      if (period.status === 'Released') throw new UserError('Released payroll cannot be cleared.')
       await payload.delete({ collection: 'payslips', where: { period: { equals: id } }, user, overrideAccess: false })
       setFlash(Astro.cookies, { type: 'success', message: 'All payslips in this period were deleted.' })
       return Astro.redirect(`/payroll/${id}`)
@@ -68,8 +68,7 @@ if (Astro.request.method === 'POST') {
       return Astro.redirect('/payroll')
     }
   } catch (err) {
-    const fe = toFormErrors(err)
-    setFlash(Astro.cookies, { type: 'error', message: (err as { status?: number }).status ? (fe.form ?? 'Could not complete that.') : (err as Error).message })
+    setFlash(Astro.cookies, { type: 'error', message: errorMessage(err) })
     return Astro.redirect(`/payroll/${id}`)
   }
 }

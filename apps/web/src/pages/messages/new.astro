@@ -6,13 +6,13 @@ import Icon from '../../components/Icon.astro'
 import App from '../../layouts/App.astro'
 import { branchChoices, employeeChoices } from '../../lib/choices'
 import { MESSAGE_CATEGORIES, parseCompose } from '../../lib/compose'
+import { errorMessage } from '../../lib/errors'
 import { setFlash } from '../../lib/flash'
-import { saveUpload } from '../../lib/upload'
+import { ATTACHMENT_TYPES, checkUpload, saveUpload } from '../../lib/upload'
 
 const { payload, user } = Astro.locals
 const q = Astro.url.searchParams
 const MAX_ATTACH = 5 * 1024 * 1024
-const ATTACH_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp']
 
 const templates = await payload.find({ collection: 'email-templates', sort: 'name', pagination: false, depth: 0, user, overrideAccess: false })
 const chosen = templates.docs.find((t) => String(t.id) === q.get('template') || (t.key && t.key === q.get('template')))
@@ -42,8 +42,9 @@ if (Astro.request.method === 'POST') {
   for (const [k, v] of fd.entries()) if (k.startsWith('ctx_') && typeof v === 'string') ctx[k.slice(4)] = v
   const files = (fd.getAll('attachments') as File[]).filter((f) => f && f.size > 0)
   const totalSize = files.reduce((s, f) => s + f.size, 0)
+  const badFile = (await Promise.all(files.map((f) => checkUpload(f, ATTACHMENT_TYPES, MAX_ATTACH)))).find(Boolean)
   if (parseError) error = parseError
-  else if (files.some((f) => !ATTACH_TYPES.includes(f.type))) error = 'Attachments must be PDF, PNG, JPG or WEBP files.'
+  else if (badFile) error = `Attachment: ${badFile}`
   else if (totalSize > MAX_ATTACH) error = 'Attachments are larger than 5 MB in total.'
   else {
     try {
@@ -56,7 +57,7 @@ if (Astro.request.method === 'POST') {
       })
       return Astro.redirect(`/messages/${res.messageId}`)
     } catch (err) {
-      error = (err as Error).message
+      error = errorMessage(err)
     }
   }
   Astro.response.status = 400

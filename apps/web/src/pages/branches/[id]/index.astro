@@ -2,7 +2,7 @@
 import { CLASSIFICATIONS, formatDate } from '@hr/shared'
 
 import Icon from '../../../components/Icon.astro'
-import StatTile from '../../../components/StatTile.astro'
+import StatCard from '../../../components/StatCard.astro'
 import App from '../../../layouts/App.astro'
 import { handleDelete } from '../../../lib/crud'
 import { statusBadge } from '../../../lib/format'
@@ -40,8 +40,8 @@ const canManage = Boolean(user)
   </Fragment>
 
   <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
-    <StatTile label="Active employees" value={active.length} tone="success" />
-    {CLASSIFICATIONS.map((c) => <StatTile label={`${c} (active)`} value={active.filter((e) => e.classification === c).length} />)}
+    <StatCard label="Active employees" value={active.length} tone="success" />
+    {CLASSIFICATIONS.map((c) => <StatCard label={`${c} (active)`} value={active.filter((e) => e.classification === c).length} />)}
   </div>
   {branch.notes && <p class="card mt-4 p-4 text-sm text-fg-2">{branch.notes}</p>}
 

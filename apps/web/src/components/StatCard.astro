@@ -1,0 +1,74 @@
+---
+// KPI card: label, value, optional change vs the previous period, sparkline and note.
+// Every number is real text; the arrow/colour of the change is backed by a screen-reader sentence.
+import Sparkline from './charts/Sparkline.astro'
+import type { SeriesSlot } from './charts/types'
+import Icon from './Icon.astro'
+
+interface Props {
+  label: string
+  value: number | string
+  note?: string
+  href?: string
+  tone?: 'neutral' | 'success' | 'warning' | 'danger' | 'primary'
+  icon?: string
+  /** Change vs the previous period in %, null when there is nothing to compare with. */
+  delta?: { pct: number | null; label?: string; invert?: boolean }
+  spark?: number[]
+  sparkSlot?: SeriesSlot
+}
+const { label, value, note, href, tone = 'neutral', icon, delta, spark, sparkSlot = 1 } = Astro.props
+const Tag = href ? 'a' : 'div'
+const dot = { neutral: 'bg-muted', success: 'bg-success', warning: 'bg-[var(--brand-warning)]', danger: 'bg-danger', primary: 'bg-primary' }[tone]
+const iconTone = {
+  neutral: 'bg-surface-2 text-fg-2',
+  success: 'bg-success-soft text-success',
+  warning: 'bg-warning-soft text-warning',
+  danger: 'bg-danger-soft text-danger',
+  primary: 'bg-primary-soft text-primary-ink',
+}[tone]
+
+const pct = delta?.pct ?? null
+const dir = pct === null || Math.abs(pct) < 0.05 ? 'flat' : pct > 0 ? 'up' : 'down'
+const good = dir === 'flat' ? null : (dir === 'up') !== Boolean(delta?.invert)
+const deltaClass = good === null ? 'bg-surface-2 text-muted' : good ? 'bg-success-soft text-success' : 'bg-danger-soft text-danger'
+const deltaText = pct === null ? '—' : `${Math.abs(pct) >= 100 ? Math.round(Math.abs(pct)) : Math.abs(pct).toFixed(1)}%`
+const deltaSr =
+  pct === null ? `No earlier data to compare ${delta?.label ?? ''}` : dir === 'flat' ? `Unchanged ${delta?.label ?? ''}` : `${dir === 'up' ? 'Up' : 'Down'} ${deltaText} ${delta?.label ?? ''}`
+---
+<Tag href={href} class:list={['card group relative flex flex-col p-4 sm:p-5', href && 'card-hover']}>
+  <div class="flex items-start justify-between gap-3">
+    <p class="flex min-w-0 items-center gap-2 text-[13px] font-medium text-muted">
+      {!icon && <span class:list={['inline-block size-2 shrink-0 rounded-full', dot]} aria-hidden="true" />}
+      <span class="truncate">{label}</span>
+    </p>
+    {
+      icon && (
+        <span class:list={['flex size-8 shrink-0 items-center justify-center rounded-lg', iconTone]} aria-hidden="true">
+          <Icon name={icon as never} class="size-4" />
+        </span>
+      )
+    }
+  </div>
+  <div class="mt-3 flex items-end justify-between gap-3">
+    <p class="text-[1.75rem] font-semibold leading-none tracking-tight text-fg tabular">{typeof value === 'number' ? value.toLocaleString() : value}</p>
+    {spark && spark.some((v) => v > 0) && <Sparkline data={spark} series={sparkSlot} />}
+  </div>
+  {
+    (delta || note) && (
+      <div class="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+        {delta && (
+          <>
+            <span class:list={['inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-medium tabular', deltaClass]} aria-hidden="true">
+              <Icon name={dir === 'up' ? 'trendingUp' : dir === 'down' ? 'trendingDown' : 'minus'} class="size-3.5" />
+              {deltaText}
+            </span>
+            <span class="sr-only">{deltaSr}</span>
+            {delta.label && <span class="text-muted" aria-hidden="true">{delta.label}</span>}
+          </>
+        )}
+        {note && <span class:list={['text-muted', delta && 'basis-full']}>{note}</span>}
+      </div>
+    )
+  }
+</Tag>

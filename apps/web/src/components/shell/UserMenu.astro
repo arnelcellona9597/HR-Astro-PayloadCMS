@@ -1,0 +1,108 @@
+---
+// Account menu in the topbar: who is signed in, account links, display preferences and Log out.
+// Keyboard: Enter/Space/↓ opens, ↑/↓/Home/End move, Esc closes, Tab leaves. Script in App.astro.
+import { ROLE_LABELS } from '@hr/shared/enums'
+
+import { initials } from '../../lib/nav'
+import Icon from '../Icon.astro'
+
+interface Props {
+  name: string
+  email: string
+  role?: keyof typeof ROLE_LABELS
+  prefs: { collapsed: boolean; right: boolean; compact: boolean }
+}
+const { name, email, role, prefs } = Astro.props
+const isSystemAdmin = role === 'system-admin'
+const roleLabel = role ? ROLE_LABELS[role] : ''
+const avatar = initials(name)
+const links = [
+  { href: '/profile', label: 'My profile', icon: 'user' },
+  ...(isSystemAdmin
+    ? [
+        { href: '/users', label: 'HR accounts', icon: 'shield' },
+        { href: '/settings/email-server', label: 'Email server', icon: 'mail' },
+      ]
+    : []),
+  { href: '/settings', label: 'Branding & theme', icon: 'settings' },
+]
+const toggles = [
+  { pref: 'collapsed', label: 'Collapsed sidebar', checked: prefs.collapsed, desktop: true },
+  { pref: 'right', label: 'Sidebar on the right', checked: prefs.right, desktop: false },
+  { pref: 'compact', label: 'Compact header', checked: prefs.compact, desktop: false },
+]
+---
+<div class="relative" data-user-menu>
+  <button
+    type="button"
+    id="user-menu-button"
+    class="flex items-center gap-2.5 rounded-full py-1 pl-1 pr-1 transition-colors hover:bg-surface-2 sm:rounded-lg sm:pr-2"
+    aria-haspopup="menu"
+    aria-expanded="false"
+    aria-controls="user-menu"
+    aria-label={`Account menu for ${name}`}
+  >
+    <span class="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-on-primary ring-2 ring-surface">{avatar}</span>
+    <span class="hidden min-w-0 text-left leading-tight md:block">
+      <span class="block max-w-40 truncate text-sm font-medium text-fg">{name}</span>
+      <span class="block max-w-40 truncate text-xs text-muted">{roleLabel}</span>
+    </span>
+    <Icon name="chevronDown" class="hidden size-4 text-muted md:block" />
+  </button>
+
+  <div
+    id="user-menu"
+    class="menu-panel absolute right-0 top-full z-50 mt-2 w-72 rounded-xl border border-line bg-surface p-1.5 shadow-pop"
+    role="menu"
+    aria-labelledby="user-menu-button"
+    hidden
+  >
+    <div class="flex items-center gap-3 px-2.5 pb-3 pt-2" role="none">
+      <span class="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-on-primary">{avatar}</span>
+      <span class="min-w-0">
+        <span class="block truncate text-sm font-semibold">{name}</span>
+        <span class="block truncate text-xs text-muted">{email}</span>
+        {roleLabel && <span class="badge-primary mt-1">{roleLabel}</span>}
+      </span>
+    </div>
+    <div class="my-1 h-px bg-line" role="separator"></div>
+    {
+      links.map((l) => (
+        <a href={l.href} class="menu-item" role="menuitem" tabindex="-1">
+          <Icon name={l.icon as never} class="size-4 shrink-0 text-muted" />
+          {l.label}
+        </a>
+      ))
+    }
+    <div class="my-1 h-px bg-line" role="separator"></div>
+    <p class="eyebrow px-2.5 pb-1 pt-2" role="presentation">Display</p>
+    <button type="button" class="menu-item" role="menuitemcheckbox" aria-checked="false" data-pref="theme" tabindex="-1">
+      <Icon name="moon" class="size-4 shrink-0 text-muted" />
+      <span class="flex-1">Dark mode</span>
+      <span class="pref-switch" aria-hidden="true"></span>
+    </button>
+    {
+      toggles.map((t) => (
+        <button
+          type="button"
+          class:list={['menu-item', t.desktop && 'max-lg:hidden']}
+          role="menuitemcheckbox"
+          aria-checked={t.checked ? 'true' : 'false'}
+          data-pref={t.pref}
+          tabindex="-1"
+        >
+          <Icon name={t.pref === 'compact' ? 'panelTop' : t.pref === 'right' ? 'panelRight' : 'panelLeft'} class="size-4 shrink-0 text-muted" />
+          <span class="flex-1">{t.label}</span>
+          <span class="pref-switch" aria-hidden="true" />
+        </button>
+      ))
+    }
+    <div class="my-1 h-px bg-line" role="separator"></div>
+    <form method="post" action="/logout" role="none">
+      <button class="menu-item menu-item-danger" role="menuitem" tabindex="-1">
+        <Icon name="logout" class="size-4 shrink-0" />
+        Log out
+      </button>
+    </form>
+  </div>
+</div>

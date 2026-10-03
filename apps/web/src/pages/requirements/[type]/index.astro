@@ -8,7 +8,7 @@ import type { Where } from 'payload'
 import EmptyState from '../../../components/EmptyState.astro'
 import Icon from '../../../components/Icon.astro'
 import Pagination from '../../../components/Pagination.astro'
-import StatTile from '../../../components/StatTile.astro'
+import StatCard from '../../../components/StatCard.astro'
 import App from '../../../layouts/App.astro'
 import { setFlash } from '../../../lib/flash'
 
@@ -99,9 +99,9 @@ const exportQuery = new URLSearchParams({ module: slug, year: String(year) })
   </div>
 
   <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-    <StatTile label="Active employees" value={stats.active} />
-    <StatTile label="Complied" value={stats.complied} tone="success" note={stats.active ? `${Math.round((stats.complied / stats.active) * 100)}%` : undefined} />
-    <StatTile label="Missing" value={stats.missing} tone={stats.missing ? 'warning' : 'success'} href={tab('missing')} />
+    <StatCard label="Active employees" value={stats.active} />
+    <StatCard label="Complied" value={stats.complied} tone="success" note={stats.active ? `${Math.round((stats.complied / stats.active) * 100)}%` : undefined} />
+    <StatCard label="Missing" value={stats.missing} tone={stats.missing ? 'warning' : 'success'} href={tab('missing')} />
   </div>
 
   <div class="mt-6 flex flex-wrap items-center justify-between gap-3">

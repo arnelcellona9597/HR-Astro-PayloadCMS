@@ -1,0 +1,41 @@
+---
+import { todayYmd } from '@hr/shared'
+import { WELLNESS_LEAVES } from '@hr/shared/modules'
+
+import LeavePreview from '../../components/leave/LeavePreview.astro'
+import ModuleForm from '../../components/ModuleForm.astro'
+import App from '../../layouts/App.astro'
+import { employeeChoices } from '../../lib/choices'
+import { handleSave } from '../../lib/crud'
+
+const { payload } = Astro.locals
+const preset = Astro.url.searchParams.get('employee') ?? ''
+const state = await handleSave(Astro, {
+  collection: 'wellness-leaves',
+  fields: WELLNESS_LEAVES.fields,
+  initial: { employee: preset, dateFiling: todayYmd(), status: 'Approved' },
+  successMessage: (d) => `Wellness leave for ${d.firstName} ${d.lastName} was saved (${d.days} day${d.days === 1 ? '' : 's'}).`,
+  redirectTo: () => '/leave',
+})
+if (state.redirect) return state.redirect
+const employees = await employeeChoices(payload, false)
+const fields = WELLNESS_LEAVES.fields.map((f) => (f.name === 'employee' ? { ...f, label: 'Employee' } : f))
+---
+<App title="File wellness leave" heading="File wellness leave" back={{ href: '/leave', label: 'Wellness leave' }}>
+  <div class="grid gap-6 xl:grid-cols-3">
+    <div class="xl:col-span-2">
+      <ModuleForm fields={fields} values={state.values} errors={state.errors} formError={state.formError} choices={{ employee: employees }} cancelHref="/leave" submitLabel="Save leave">
+        <LeavePreview />
+      </ModuleForm>
+    </div>
+    <aside class="card h-fit p-5 text-sm text-fg-2">
+      <h2 class="mb-2 font-semibold text-fg">How days are counted</h2>
+      <ul class="list-disc space-y-1 pl-5">
+        <li>Only Monday–Friday count. Weekends and the holidays listed under Allowance & holidays are skipped.</li>
+        <li>A filing is blocked if it would go over the employee's yearly allowance or overlap another filing.</li>
+        <li>Leave that runs from December into January is charged to both years.</li>
+        <li>Disapproved and cancelled filings don't use up days.</li>
+      </ul>
+    </aside>
+  </div>
+</App>

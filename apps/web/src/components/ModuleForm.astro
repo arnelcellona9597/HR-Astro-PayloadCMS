@@ -1,0 +1,86 @@
+---
+// Generic create/edit form for a module: groups fields by section and renders them in a grid.
+import type { ModuleField } from '@hr/shared/modules'
+
+import FormField, { type Choice } from './FormField.astro'
+
+interface Props {
+  fields: ModuleField[]
+  values: Record<string, string>
+  errors?: Record<string, string>
+  formError?: string
+  choices?: Record<string, Choice[]>
+  suggestions?: Record<string, string[]>
+  submitLabel?: string
+  cancelHref: string
+  enctype?: string
+  /** Fields that are shown but locked (e.g. the employee on an existing leave filing). */
+  locked?: string[]
+  wide?: string[]
+}
+const {
+  fields,
+  values,
+  errors = {},
+  formError,
+  choices = {},
+  suggestions = {},
+  submitLabel = 'Save',
+  cancelHref,
+  enctype,
+  locked = [],
+  wide = [],
+} = Astro.props
+const editable = fields.filter((f) => !f.computed)
+const sections = [...new Set(editable.map((f) => f.section ?? ''))]
+const isWide = (f: ModuleField) => f.kind === 'textarea' || wide.includes(f.name)
+---
+<form method="post" class="space-y-6" enctype={enctype} data-dirty-guard novalidate>
+  {formError && <div class="rounded-lg bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{formError}</div>}
+  <slot name="before" />
+  {
+    sections.map((section) => (
+      <fieldset class="card p-5">
+        {section && <legend class="px-1 text-sm font-semibold text-fg">{section}</legend>}
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {editable
+            .filter((f) => (f.section ?? '') === section)
+            .map((f) => (
+              <FormField
+                field={f}
+                value={values[f.name] ?? ''}
+                error={errors[f.name]}
+                choices={choices[f.name]}
+                suggestions={suggestions[f.name]}
+                disabled={locked.includes(f.name)}
+                class={isWide(f) ? 'sm:col-span-2 lg:col-span-3' : undefined}
+              />
+            ))}
+        </div>
+      </fieldset>
+    ))
+  }
+  <slot />
+  <div class="flex flex-wrap items-center gap-3">
+    <button class="btn-primary">{submitLabel}</button>
+    <a href={cancelHref} class="btn-secondary">Cancel</a>
+    <p class="text-xs text-muted"><span class="text-danger">*</span> required</p>
+  </div>
+</form>
+
+<script>
+  // Type-to-filter for long employee dropdowns.
+  document.querySelectorAll<HTMLSelectElement>('select[data-searchable]').forEach((select) => {
+    const search = document.createElement('input')
+    search.type = 'search'
+    search.placeholder = 'Type to filter employees…'
+    search.className = 'input mb-2'
+    search.setAttribute('aria-label', 'Filter employee list')
+    select.before(search)
+    const all = [...select.options]
+    search.addEventListener('input', () => {
+      const q = search.value.toLowerCase()
+      for (const o of all) o.hidden = Boolean(q) && o.value !== '' && !o.text.toLowerCase().includes(q)
+    })
+  })
+</script>

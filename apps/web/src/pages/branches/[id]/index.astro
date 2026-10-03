@@ -1,0 +1,71 @@
+---
+import { CLASSIFICATIONS, formatDate } from '@hr/shared'
+
+import Icon from '../../../components/Icon.astro'
+import StatTile from '../../../components/StatTile.astro'
+import App from '../../../layouts/App.astro'
+import { handleDelete } from '../../../lib/crud'
+import { statusBadge } from '../../../lib/format'
+
+const { payload, user } = Astro.locals
+const id = Number(Astro.params.id)
+const branch = await payload.findByID({ collection: 'branches', id, depth: 0, user, overrideAccess: false, disableErrors: true })
+if (!branch) return new Response(null, { status: 404 })
+if (Astro.request.method === 'POST') return handleDelete(Astro, 'branches', id, `Branch ${branch.name}`, '/branches', `/branches/${id}`)
+
+const employees = await payload.find({
+  collection: 'employees',
+  where: { station: { equals: id } },
+  sort: ['employmentStatus', 'fullName'],
+  limit: 2000,
+  pagination: false,
+  depth: 0,
+  user,
+  overrideAccess: false,
+  select: { employeeId: true, fullName: true, position: true, classification: true, employmentStatus: true, dateHired: true },
+})
+const active = employees.docs.filter((e) => e.employmentStatus === 'Active')
+const isAdmin = user?.role === 'super-admin' || user?.role === 'hr-admin'
+---
+<App title={branch.name} heading={branch.name} description={[branch.address, branch.region, branch.contactNumber].filter(Boolean).join(' · ')} back={{ href: '/branches', label: 'Branches' }}>
+  <Fragment slot="actions">
+    <a class="btn-secondary" href={`/employees?branch=${id}`}><Icon name="search" /> Search employees here</a>
+    <a class="btn-primary" href={`/branches/${id}/edit`}><Icon name="edit" /> Edit</a>
+    {isAdmin && (
+      <form method="post" data-confirm={`Delete ${branch.name}? Only possible when no employees or applicants are assigned.`}>
+        <button class="btn-danger"><Icon name="trash" /> Delete</button>
+      </form>
+    )}
+  </Fragment>
+
+  <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+    <StatTile label="Active employees" value={active.length} tone="success" />
+    {CLASSIFICATIONS.map((c) => <StatTile label={`${c} (active)`} value={active.filter((e) => e.classification === c).length} />)}
+  </div>
+  {branch.notes && <p class="card mt-4 p-4 text-sm text-fg-2">{branch.notes}</p>}
+
+  <div class="card mt-6 overflow-hidden">
+    <header class="p-4"><h2 class="text-sm font-semibold">Assigned employees ({employees.totalDocs})</h2></header>
+    {employees.docs.length === 0 ? (
+      <p class="px-4 pb-6 text-sm text-muted">No employees are assigned to this branch.</p>
+    ) : (
+      <div class="overflow-x-auto">
+        <table class="table">
+          <thead><tr><th>Employee ID</th><th>Name</th><th>Position</th><th>Classification</th><th>Status</th><th>Date hired</th></tr></thead>
+          <tbody>
+            {employees.docs.map((e) => (
+              <tr>
+                <td class="font-mono text-xs text-fg-2">{e.employeeId}</td>
+                <td><a class="font-medium hover:text-primary-ink" href={`/employees/${e.id}`}>{e.fullName}</a></td>
+                <td>{e.position}</td>
+                <td><span class="badge-neutral">{e.classification}</span></td>
+                <td><span class={statusBadge(e.employmentStatus)}>{e.employmentStatus}</span></td>
+                <td class="whitespace-nowrap tabular text-fg-2">{formatDate(e.dateHired)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+  </div>
+</App>

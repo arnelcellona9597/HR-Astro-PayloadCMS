@@ -1,0 +1,186 @@
+---
+// A bar/column chart card: canvas (Chart.js), an HTML legend for 2+ series, and a table view so every
+// value is readable without hovering or relying on color.
+import type { BarSpec } from './types'
+
+interface Props {
+  title: string
+  subtitle?: string
+  spec: BarSpec
+  /** Canvas height in px; horizontal charts grow with the number of bars. */
+  height?: number
+  emptyText?: string
+}
+const { title, subtitle, spec, emptyText = 'No data yet.' } = Astro.props
+const isEmpty = spec.labels.length === 0 || spec.series.every((s) => s.data.every((v) => !v))
+const height = Astro.props.height ?? (spec.horizontal ? Math.max(160, spec.labels.length * 30 + 40) : 280)
+const id = `chart-${Math.random().toString(36).slice(2, 9)}`
+const totals = spec.labels.map((_, i) => spec.series.reduce((sum, s) => sum + (s.data[i] ?? 0), 0))
+---
+<section class="card flex flex-col p-4 sm:p-5" aria-labelledby={`${id}-title`}>
+  <header class="mb-3">
+    <h2 id={`${id}-title`} class="text-sm font-semibold">{title}</h2>
+    {subtitle && <p class="mt-0.5 text-xs text-muted">{subtitle}</p>}
+  </header>
+  {
+    isEmpty ? (
+      <p class="flex flex-1 items-center justify-center py-10 text-sm text-muted">{emptyText}</p>
+    ) : (
+      <>
+        {spec.series.length > 1 && (
+          <ul class="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-fg-2" aria-label="Legend">
+            {spec.series.map((s) => (
+              <li class="flex items-center gap-1.5">
+                <span class="inline-block size-2.5 rounded-sm" style={`background: var(--series-${s.slot})`} />
+                {s.label}
+              </li>
+            ))}
+          </ul>
+        )}
+        <div class="relative" style={`height:${height}px`}>
+          <canvas data-bar-chart={JSON.stringify(spec)} role="img" aria-label={`${title}. Values are listed in the table below.`} />
+        </div>
+        <details class="mt-3 text-sm">
+          <summary class="cursor-pointer select-none text-xs font-medium text-muted hover:text-fg">View as table</summary>
+          <div class="mt-2 max-h-72 overflow-auto rounded-lg border border-line">
+            <table class="table tabular">
+              <thead>
+                <tr>
+                  <th scope="col">Category</th>
+                  {spec.series.map((s) => <th scope="col" class="text-right">{s.label}</th>)}
+                  {spec.series.length > 1 && <th scope="col" class="text-right">Total</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {spec.labels.map((label, i) => (
+                  <tr>
+                    <th scope="row" class="!bg-transparent !text-sm !font-normal !normal-case !tracking-normal !text-fg">{label}</th>
+                    {spec.series.map((s) => <td class="text-right">{(s.data[i] ?? 0).toLocaleString()}</td>)}
+                    {spec.series.length > 1 && <td class="text-right font-medium">{totals[i]!.toLocaleString()}</td>}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      </>
+    )
+  }
+</section>
+
+<script>
+  import { Chart, BarController, BarElement, CategoryScale, LinearScale, Tooltip, type ChartConfiguration } from 'chart.js'
+  import type { BarSpec } from './types'
+
+  Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip)
+
+  const css = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+
+  // Direct value labels at the bar tip (single-series charts only — never a number on every segment).
+  const valueLabelPlugin = {
+    id: 'hrValueLabels',
+    afterDatasetsDraw(chart: Chart) {
+      const spec = (chart.options.plugins as { hrSpec?: BarSpec }).hrSpec
+      if (!spec?.valueLabels || spec.series.length !== 1) return
+      const { ctx } = chart
+      const meta = chart.getDatasetMeta(0)
+      ctx.save()
+      ctx.fillStyle = css('--chart-ink')
+      ctx.font = '12px system-ui, sans-serif'
+      meta.data.forEach((bar, i) => {
+        const v = spec.series[0]!.data[i]
+        if (!v) return
+        const { x, y } = bar.getProps(['x', 'y'], true) as { x: number; y: number }
+        if (spec.horizontal) {
+          ctx.textAlign = 'left'
+          ctx.textBaseline = 'middle'
+          ctx.fillText(v.toLocaleString(), x + 6, y)
+        } else {
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'bottom'
+          ctx.fillText(v.toLocaleString(), x, y - 4)
+        }
+      })
+      ctx.restore()
+    },
+  }
+
+  const charts = new Map<HTMLCanvasElement, Chart>()
+
+  function render(canvas: HTMLCanvasElement) {
+    const spec = JSON.parse(canvas.dataset.barChart!) as BarSpec
+    charts.get(canvas)?.destroy()
+    const surface = css('--surface')
+    const grid = css('--chart-grid')
+    const ink = css('--chart-ink')
+    const last = spec.series.length - 1
+    const valueAxis = spec.horizontal ? 'x' : 'y'
+    const catAxis = spec.horizontal ? 'y' : 'x'
+    const config: ChartConfiguration<'bar'> = {
+      type: 'bar',
+      data: {
+        labels: spec.labels,
+        datasets: spec.series.map((s, i) => ({
+          label: s.label,
+          data: s.data,
+          backgroundColor: css(`--series-${s.slot}`),
+          hoverBackgroundColor: css(`--series-${s.slot}`),
+          maxBarThickness: 24,
+          // 4px rounded data-end, square at the baseline; stacked segments separated by a 2px surface gap
+          borderRadius: spec.stacked ? (i === last ? 4 : 0) : 4,
+          borderSkipped: 'start',
+          borderWidth: spec.stacked ? 2 : 0,
+          borderColor: surface,
+          categoryPercentage: 0.7,
+          barPercentage: 0.9,
+        })),
+      },
+      options: {
+        indexAxis: spec.horizontal ? 'y' : 'x',
+        maintainAspectRatio: false,
+        animation: false,
+        layout: { padding: spec.valueLabels ? (spec.horizontal ? { right: 40 } : { top: 18 }) : 0 },
+        interaction: { mode: 'index', intersect: false, axis: spec.horizontal ? 'y' : 'x' },
+        scales: {
+          [valueAxis]: {
+            stacked: spec.stacked,
+            beginAtZero: true,
+            grid: { color: grid, drawTicks: false },
+            border: { display: false },
+            ticks: { color: ink, precision: 0, padding: 6, font: { size: 11 } },
+          },
+          [catAxis]: {
+            stacked: spec.stacked,
+            grid: { display: false },
+            border: { color: css('--chart-axis') },
+            ticks: { color: ink, font: { size: 11 }, autoSkip: !spec.horizontal },
+          },
+        },
+        plugins: {
+          // @ts-expect-error custom option read by valueLabelPlugin
+          hrSpec: spec,
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: surface,
+            titleColor: css('--fg'),
+            bodyColor: css('--fg'),
+            borderColor: css('--border'),
+            borderWidth: 1,
+            padding: 10,
+            boxPadding: 4,
+            usePointStyle: true,
+            callbacks: {
+              label: (item) => ` ${Number(item.raw).toLocaleString()}${spec.unit ? ` ${spec.unit}` : ''} — ${item.dataset.label}`,
+            },
+          },
+        },
+      },
+      plugins: [valueLabelPlugin],
+    }
+    charts.set(canvas, new Chart(canvas, config))
+  }
+
+  const renderAll = () => document.querySelectorAll<HTMLCanvasElement>('canvas[data-bar-chart]').forEach(render)
+  renderAll()
+  window.addEventListener('hr:theme', renderAll)
+</script>

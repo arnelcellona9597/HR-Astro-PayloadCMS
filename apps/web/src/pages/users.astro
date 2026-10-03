@@ -1,0 +1,135 @@
+---
+import { ROLE_LABELS, ROLES, USER_STATUSES } from '@hr/shared/enums'
+
+import App from '../layouts/App.astro'
+import { toFormErrors } from '../lib/errors'
+import { setFlash } from '../lib/flash'
+import { statusBadge } from '../lib/format'
+
+const { payload, user } = Astro.locals
+
+if (Astro.request.method === 'POST') {
+  const fd = await Astro.request.formData()
+  const id = Number(fd.get('id'))
+  const action = String(fd.get('action'))
+  try {
+    if (action === 'update') {
+      const role = String(fd.get('role'))
+      const status = String(fd.get('status'))
+      if (!(ROLES as readonly string[]).includes(role) || !(USER_STATUSES as readonly string[]).includes(status)) throw new Error('Invalid role or status')
+      const doc = await payload.update({ collection: 'users', id, data: { role: role as never, status: status as never }, user, overrideAccess: false })
+      setFlash(Astro.cookies, { type: 'success', message: `${doc.name} is now ${ROLE_LABELS[doc.role]} (${doc.status}).` })
+    } else if (action === 'approve') {
+      const doc = await payload.update({ collection: 'users', id, data: { status: 'approved' }, user, overrideAccess: false })
+      setFlash(Astro.cookies, { type: 'success', message: `${doc.name} can now sign in.` })
+    } else if (action === 'unlock') {
+      const target = await payload.findByID({ collection: 'users', id, overrideAccess: true })
+      await payload.unlock({ collection: 'users', data: { email: target.email } as never, overrideAccess: true })
+      setFlash(Astro.cookies, { type: 'success', message: `${target.name} was unlocked.` })
+    } else if (action === 'password') {
+      const password = String(fd.get('password') ?? '')
+      const doc = await payload.update({ collection: 'users', id, data: { password } as never, user, overrideAccess: false })
+      setFlash(Astro.cookies, { type: 'success', message: `New password set for ${doc.name}. Share it securely and ask them to change it.` })
+    } else if (action === 'delete') {
+      await payload.delete({ collection: 'users', id, user, overrideAccess: false })
+      setFlash(Astro.cookies, { type: 'success', message: 'Account deleted.' })
+    }
+  } catch (err) {
+    const fe = toFormErrors(err)
+    setFlash(Astro.cookies, { type: 'error', message: Object.values(fe.fields)[0] ?? fe.form ?? 'Could not update the account.' })
+  }
+  return Astro.redirect('/users')
+}
+
+const users = await payload.find({ collection: 'users', sort: ['status', 'name'], limit: 500, depth: 0, user, overrideAccess: false, showHiddenFields: true })
+const pending = users.docs.filter((u) => u.status === 'pending')
+const others = users.docs.filter((u) => u.status !== 'pending')
+const locked = (u: { lockUntil?: string | null }) => Boolean(u.lockUntil && new Date(u.lockUntil) > new Date())
+---
+<App title="HR Users" heading="HR users" description="Approve new sign-ups, set roles, and disable accounts that should no longer have access.">
+  {pending.length > 0 && (
+    <section class="card mb-6 overflow-hidden border-warning">
+      <header class="bg-warning-soft px-4 py-3"><h2 class="text-sm font-semibold text-warning">Waiting for approval ({pending.length})</h2></header>
+      <ul class="divide-y divide-[var(--border)]">
+        {pending.map((u) => (
+          <li class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+            <div>
+              <p class="font-medium">{u.name}</p>
+              <p class="text-sm text-muted">{u.email} · requested {new Date(u.createdAt).toLocaleDateString('en-PH', { timeZone: 'Asia/Manila' })}</p>
+            </div>
+            <div class="flex gap-2">
+              <form method="post"><input type="hidden" name="id" value={u.id} /><input type="hidden" name="action" value="approve" /><button class="btn-primary btn-sm">Approve as HR Staff</button></form>
+              <form method="post" data-confirm={`Reject and delete the request from ${u.name}?`}><input type="hidden" name="id" value={u.id} /><input type="hidden" name="action" value="delete" /><button class="btn-danger btn-sm">Reject</button></form>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )}
+
+  <div class="card overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="table">
+        <thead><tr><th>Name</th><th>Email</th><th>Role & status</th><th>Security</th><th></th></tr></thead>
+        <tbody>
+          {others.map((u) => {
+            const self = u.id === user?.id
+            return (
+              <tr>
+                <td class="font-medium">{u.name}{self && <span class="ml-2 badge-primary">You</span>}</td>
+                <td class="text-fg-2">{u.email}</td>
+                <td>
+                  <form method="post" class="flex flex-wrap items-center gap-2">
+                    <input type="hidden" name="id" value={u.id} />
+                    <input type="hidden" name="action" value="update" />
+                    <select class="input w-auto py-1.5" name="role" aria-label={`Role for ${u.name}`}>
+                      {ROLES.map((r) => <option value={r} selected={u.role === r}>{ROLE_LABELS[r]}</option>)}
+                    </select>
+                    <select class="input w-auto py-1.5" name="status" aria-label={`Status for ${u.name}`}>
+                      {USER_STATUSES.map((s) => <option value={s} selected={u.status === s}>{s}</option>)}
+                    </select>
+                    <button class="btn-secondary btn-sm">Save</button>
+                    <span class={statusBadge(u.status)}>{u.status}</span>
+                  </form>
+                </td>
+                <td>
+                  <div class="flex flex-wrap items-center gap-2">
+                    {locked(u) && (
+                      <form method="post"><input type="hidden" name="id" value={u.id} /><input type="hidden" name="action" value="unlock" /><button class="btn-secondary btn-sm">Unlock (too many attempts)</button></form>
+                    )}
+                    {!self && (
+                      <details class="relative">
+                        <summary class="btn-ghost btn-sm cursor-pointer list-none">Set password…</summary>
+                        <form method="post" class="card absolute right-0 z-10 mt-1 flex w-72 flex-col gap-2 p-3 shadow-lg">
+                          <input type="hidden" name="id" value={u.id} />
+                          <input type="hidden" name="action" value="password" />
+                          <label class="label" for={`pw-${u.id}`}>Temporary password</label>
+                          <input class="input" id={`pw-${u.id}`} name="password" type="text" minlength="10" required autocomplete="off" />
+                          <button class="btn-primary btn-sm">Set password</button>
+                        </form>
+                      </details>
+                    )}
+                  </div>
+                </td>
+                <td class="text-right">
+                  {!self && (
+                    <form method="post" data-confirm={`Delete the account of ${u.name}? Disabling keeps their history linked; deleting removes the login.`}>
+                      <input type="hidden" name="id" value={u.id} />
+                      <input type="hidden" name="action" value="delete" />
+                      <button class="btn-ghost btn-sm text-danger">Delete</button>
+                    </form>
+                  )}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="mt-4 grid gap-3 text-sm text-fg-2 md:grid-cols-3">
+    <p class="card p-4"><strong class="text-fg">Super Admin</strong> — everything, including users, branding and settings.</p>
+    <p class="card p-4"><strong class="text-fg">HR Admin</strong> — all HR records including deleting, Excel import, audit log and leave allowance.</p>
+    <p class="card p-4"><strong class="text-fg">HR Staff</strong> — view, add and edit HR records and export; cannot delete or import.</p>
+  </div>
+</App>

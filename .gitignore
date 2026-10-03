@@ -1,0 +1,29 @@
+node_modules/
+.pnpm-store/
+
+# builds
+apps/cms/.next/
+apps/web/dist/
+apps/web/.astro/
+release/
+*.tsbuildinfo
+next-env.d.ts
+
+# runtime data (database, uploads, backups) — never commit
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# env
+.env
+.env.*
+!.env.example
+
+# tests
+coverage/
+test-results/
+playwright-report/
+
+.DS_Store
+*.log

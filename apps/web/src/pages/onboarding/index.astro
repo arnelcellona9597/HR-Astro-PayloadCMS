@@ -1,0 +1,263 @@
+---
+import { addDays, APPLICATION_STATUSES, formatDate, ONBOARDING_REQUIREMENTS, REQUIREMENT_STATUSES, todayYmd } from '@hr/shared'
+import type { Where } from 'payload'
+
+import EmptyState from '../../components/EmptyState.astro'
+import Icon from '../../components/Icon.astro'
+import Pagination from '../../components/Pagination.astro'
+import SortHeader from '../../components/SortHeader.astro'
+import StatTile from '../../components/StatTile.astro'
+import App from '../../layouts/App.astro'
+import { relName, statusBadge } from '../../lib/format'
+
+const { payload, user } = Astro.locals
+const p = Astro.url.searchParams
+const q = (p.get('q') ?? '').trim().slice(0, 100)
+const status = p.getAll('status').filter((s) => (APPLICATION_STATUSES as readonly string[]).includes(s))
+const requirements = ['Complete', 'Incomplete'].includes(p.get('requirements') ?? '') ? p.get('requirements') : null
+const station = Number(p.get('station')) || null
+const page = Math.max(1, Number(p.get('page')) || 1)
+const SORTS = ['applicationId', 'applicantName', 'positionApplied', 'dateApplied', 'startOjt', 'applicationStatus', 'requirementsStatus', 'dateSubmitted']
+const sortRaw = p.get('sort') ?? '-dateApplied'
+const sort = SORTS.includes(sortRaw.replace(/^-/, '')) ? sortRaw : '-dateApplied'
+
+const and: Where[] = []
+if (q) and.push({ or: [{ applicantName: { like: q } }, { applicationId: { like: q } }, { positionApplied: { like: q } }, { replacement: { like: q } }] })
+if (status.length) and.push({ applicationStatus: { in: status } })
+if (requirements) and.push({ requirementsStatus: { equals: requirements } })
+if (station) and.push({ station: { equals: station } })
+
+const today = todayYmd()
+const year = today.slice(0, 4)
+const [apps, branches, statusCounts, newHires, separations] = await Promise.all([
+  payload.find({
+    collection: 'applications',
+    where: and.length ? { and } : {},
+    sort: [sort, 'id'],
+    page,
+    limit: 25,
+    depth: 1,
+    user,
+    overrideAccess: false,
+    populate: { branches: { name: true } },
+  }),
+  payload.find({ collection: 'branches', limit: 500, depth: 0, sort: 'name', overrideAccess: true, select: { name: true } }),
+  Promise.all(
+    APPLICATION_STATUSES.map(async (s) => ({
+      status: s,
+      count: (await payload.count({ collection: 'applications', where: { applicationStatus: { equals: s } }, user, overrideAccess: false })).totalDocs,
+    })),
+  ),
+  payload.find({
+    collection: 'employees',
+    where: { dateHired: { greater_than_equal: `${addDays(today, -90)}T00:00:00.000Z` } },
+    sort: '-dateHired',
+    limit: 10,
+    depth: 0,
+    user,
+    overrideAccess: false,
+    select: { fullName: true, position: true, dateHired: true, employmentStatus: true },
+  }),
+  payload.find({
+    collection: 'employees',
+    where: {
+      and: [
+        { employmentStatus: { in: ['Resigned', 'Retired', 'Terminated'] } },
+        { lastDayOfService: { greater_than_equal: `${year}-01-01T00:00:00.000Z` } },
+      ],
+    },
+    sort: '-lastDayOfService',
+    limit: 200,
+    depth: 0,
+    user,
+    overrideAccess: false,
+    select: { fullName: true, position: true, lastDayOfService: true, employmentStatus: true },
+  }),
+])
+const sepCount = (s: string) => separations.docs.filter((e) => e.employmentStatus === s).length
+const activeCount = (await payload.count({ collection: 'employees', where: { employmentStatus: { equals: 'Active' } }, user, overrideAccess: false })).totalDocs
+const reqTone: Record<string, string> = { Pending: 'badge-warning', Submitted: 'badge-primary', Verified: 'badge-success', 'N/A': 'badge-neutral' }
+const short = (label: string) => label.replace('Verification', 'Verif.').replace('Declaration', 'Decl.').replace('Assumption of Duty', 'Assumption')
+const canEdit = Boolean(user)
+const exportQuery = new URLSearchParams(p)
+exportQuery.delete('page')
+exportQuery.set('module', 'applications')
+---
+<App title="Onboarding Tracker" heading="Onboarding tracker" description="Applicants and their document requirements, plus who joined and left recently.">
+  <Fragment slot="actions">
+    <a class="btn-secondary" href={`/data/export?${exportQuery}`}><Icon name="download" /> Export</a>
+    <a class="btn-primary" href="/onboarding/new"><Icon name="plus" /> New application</a>
+  </Fragment>
+
+  <div class="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+    {statusCounts.map((s) => <StatTile label={s.status} value={s.count} href={`/onboarding?status=${encodeURIComponent(s.status)}`} />)}
+  </div>
+
+  <section class="mt-6 grid gap-4 lg:grid-cols-4" aria-label="Workforce movement">
+    <div class="card p-4">
+      <p class="text-xs font-medium text-muted">Active employees</p>
+      <p class="mt-1 text-3xl font-semibold tabular">{activeCount}</p>
+      <a href="/employees?status=Active" class="text-xs text-primary-ink hover:underline">View list</a>
+    </div>
+    <div class="card p-4 lg:col-span-2">
+      <p class="text-xs font-medium text-muted">Newly hired (last 90 days) · {newHires.totalDocs}</p>
+      {newHires.docs.length === 0 ? <p class="mt-2 text-sm text-muted">No new hires.</p> : (
+        <ul class="mt-2 divide-y divide-[var(--border)] text-sm">
+          {newHires.docs.slice(0, 5).map((e) => (
+            <li class="flex justify-between gap-3 py-1.5">
+              <a href={`/employees/${e.id}`} class="truncate font-medium hover:text-primary-ink">{e.fullName}</a>
+              <span class="shrink-0 text-muted tabular">{formatDate(e.dateHired)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+    <div class="card p-4">
+      <p class="text-xs font-medium text-muted">Separated in {year}</p>
+      <dl class="mt-2 space-y-1.5 text-sm">
+        {(['Resigned', 'Retired', 'Terminated'] as const).map((s) => (
+          <div class="flex justify-between">
+            <dt><a class="hover:text-primary-ink" href={`/employees?status=${s}&sort=-dateHired`}>{s}</a></dt>
+            <dd class="font-semibold tabular">{sepCount(s)}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  </section>
+
+  <form method="get" class="card mt-6 flex flex-wrap items-end gap-3 p-4" data-autosubmit>
+    <div class="min-w-56 flex-1">
+      <label class="label" for="q">Search</label>
+      <input class="input" id="q" name="q" type="search" value={q} placeholder="Applicant, application ID, position, replacement…" />
+    </div>
+    <div>
+      <label class="label" for="status">Application status</label>
+      <select class="input" id="status" name="status">
+        <option value="">All</option>
+        {APPLICATION_STATUSES.map((s) => <option selected={status.includes(s)}>{s}</option>)}
+      </select>
+    </div>
+    <div>
+      <label class="label" for="requirements">Requirements</label>
+      <select class="input" id="requirements" name="requirements">
+        <option value="">All</option>
+        <option selected={requirements === 'Incomplete'}>Incomplete</option>
+        <option selected={requirements === 'Complete'}>Complete</option>
+      </select>
+    </div>
+    <div>
+      <label class="label" for="station">Station</label>
+      <select class="input" id="station" name="station">
+        <option value="">All</option>
+        {branches.docs.map((b) => <option value={b.id} selected={b.id === station}>{b.name}</option>)}
+      </select>
+    </div>
+    <button class="btn-primary">Filter</button>
+    {(q || status.length || requirements || station) && <a class="btn-ghost" href="/onboarding">Clear</a>}
+  </form>
+
+  <div class="card mt-4 overflow-hidden">
+    {
+      apps.totalDocs === 0 ? (
+        <EmptyState title="No applications found" text="Add an applicant to start tracking requirements.">
+          <a class="btn-primary" href="/onboarding/new">New application</a>
+        </EmptyState>
+      ) : (
+        <>
+          <div class="overflow-x-auto">
+            <table class="table text-xs">
+              <thead>
+                <tr>
+                  <SortHeader field="applicationId" label="App ID" />
+                  <SortHeader field="applicantName" label="Applicant" />
+                  <SortHeader field="positionApplied" label="Position" />
+                  <th>Station</th>
+                  <SortHeader field="dateApplied" label="Applied" />
+                  <SortHeader field="applicationStatus" label="Status" />
+                  {ONBOARDING_REQUIREMENTS.map((r) => <th class="!normal-case" title={r.label}>{short(r.label)}</th>)}
+                  <SortHeader field="dateSubmitted" label="Submitted" />
+                  <SortHeader field="requirementsStatus" label="FDS Status" />
+                </tr>
+              </thead>
+              <tbody>
+                {apps.docs.map((a) => (
+                  <tr data-app={a.id}>
+                    <td class="whitespace-nowrap font-mono text-fg-2">
+                      <a class="hover:text-primary-ink" href={`/onboarding/${a.id}`}>{a.applicationId}</a>
+                    </td>
+                    <td class="min-w-36 text-sm">
+                      <a class="font-medium hover:text-primary-ink" href={`/onboarding/${a.id}`}>{a.applicantName}</a>
+                      {a.replacement && <span class="block text-xs text-muted">Replaces {a.replacement}</span>}
+                    </td>
+                    <td class="min-w-32">{a.positionApplied}</td>
+                    <td class="min-w-28 text-fg-2">{relName(a.station)}</td>
+                    <td class="whitespace-nowrap tabular text-fg-2">{formatDate(a.dateApplied)}</td>
+                    <td><span class={statusBadge(a.applicationStatus)}>{a.applicationStatus}</span></td>
+                    {ONBOARDING_REQUIREMENTS.map((r) => {
+                      const v = (a as unknown as Record<string, unknown>)[r.key] as string
+                      return (
+                        <td class="!px-1.5">
+                          {canEdit ? (
+                            <select
+                              class:list={['cursor-pointer rounded-full border-0 py-0.5 pl-2 pr-1 text-xs font-medium', reqTone[v]]}
+                              data-req={r.key}
+                              aria-label={`${r.label} for ${a.applicantName}`}
+                            >
+                              {REQUIREMENT_STATUSES.map((s) => <option selected={s === v}>{s}</option>)}
+                            </select>
+                          ) : (
+                            <span class={reqTone[v]}>{v}</span>
+                          )}
+                        </td>
+                      )
+                    })}
+                    <td class="whitespace-nowrap tabular text-fg-2">{formatDate(a.dateSubmitted)}</td>
+                    <td data-fds>
+                      <span class={statusBadge(a.requirementsStatus)}>
+                        {a.requirementsStatus === 'Complete' ? 'Complete' : `${a.requirementsMissing} missing`}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Pagination page={apps.page ?? 1} totalPages={apps.totalPages} totalDocs={apps.totalDocs} limit={25} />
+        </>
+      )
+    }
+  </div>
+  <p class="mt-2 text-xs text-muted">Change a requirement directly in the table — it saves immediately. FDS status is Complete when every document is Submitted, Verified or N/A.</p>
+</App>
+
+<script>
+  const TONE: Record<string, string> = { Pending: 'badge-warning', Submitted: 'badge-primary', Verified: 'badge-success', 'N/A': 'badge-neutral' }
+  document.querySelectorAll<HTMLSelectElement>('select[data-req]').forEach((sel) => {
+    let previous = sel.value
+    sel.addEventListener('change', async () => {
+      const row = sel.closest<HTMLTableRowElement>('tr[data-app]')!
+      sel.disabled = true
+      try {
+        const res = await fetch('/onboarding/requirement', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: Number(row.dataset.app), key: sel.dataset.req, value: sel.value }),
+        })
+        const body = await res.json()
+        if (!res.ok) throw new Error(body.error ?? 'Could not save')
+        previous = sel.value
+        Object.values(TONE).forEach((c) => sel.classList.remove(c))
+        sel.classList.add(TONE[sel.value]!)
+        const fds = row.querySelector('[data-fds] span')!
+        fds.className = body.requirementsStatus === 'Complete' ? 'badge-success' : 'badge-warning'
+        fds.textContent = body.requirementsStatus === 'Complete' ? 'Complete' : `${body.requirementsMissing} missing`
+      } catch (err) {
+        sel.value = previous
+        alert((err as Error).message)
+      } finally {
+        sel.disabled = false
+      }
+    })
+  })
+  document.querySelectorAll<HTMLFormElement>('form[data-autosubmit] select').forEach((s) => s.addEventListener('change', () => s.form!.requestSubmit()))
+</script>

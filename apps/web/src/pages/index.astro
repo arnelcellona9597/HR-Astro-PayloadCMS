@@ -1,0 +1,147 @@
+---
+import { employeeStats, onboardingStats } from '@hr/cms/server/stats'
+import { CLASSIFICATIONS, EMPLOYMENT_STATUSES, todayYmd } from '@hr/shared'
+
+import BarChart from '../components/charts/BarChart.astro'
+import SplitBars from '../components/charts/SplitBars.astro'
+import StatTile from '../components/StatTile.astro'
+import App from '../layouts/App.astro'
+
+const { payload } = Astro.locals
+const params = Astro.url.searchParams
+const branchId = Number(params.get('branch')) || null
+const classification = CLASSIFICATIONS.includes(params.get('classification') as never) ? params.get('classification') : null
+
+const [stats, branches, onboarding] = await Promise.all([
+  employeeStats(payload, { branchId, classification, scope: 'active' }),
+  payload.find({ collection: 'branches', limit: 500, depth: 0, sort: 'name', overrideAccess: true, select: { name: true } }),
+  onboardingStats(payload),
+])
+
+const statusCount = (s: string) => stats.byStatus.find((r) => r.status === s)?.count ?? 0
+const tone = { Active: 'success', Resigned: 'warning', Retired: 'primary', Terminated: 'danger' } as const
+
+// Gender split, overall and per employment status
+const genderOf = (status: string | null, gender: string) =>
+  stats.byStatusGender.filter((r) => (status ? r.status === status : true) && r.gender === gender).reduce((s, r) => s + r.count, 0)
+const genderRows = [null, ...EMPLOYMENT_STATUSES].map((status) => ({
+  label: status ?? 'All employees',
+  parts: [
+    { label: 'Male', value: genderOf(status, 'Male'), slot: 1 as const },
+    { label: 'Female', value: genderOf(status, 'Female'), slot: 2 as const },
+  ],
+}))
+
+// Classification by employment status
+const classSeries = CLASSIFICATIONS.map((c, i) => ({
+  label: c,
+  slot: (i + 1) as 1 | 2 | 3,
+  data: EMPLOYMENT_STATUSES.map((s) => stats.byClassification.find((r) => r.classification === c && r.status === s)?.count ?? 0),
+}))
+
+// Positions: top 15 + Others (active employees)
+const TOP = 15
+const topPositions = stats.positions.slice(0, TOP)
+const others = stats.positions.slice(TOP).reduce((s, p) => s + p.total, 0)
+const positionLabels = [...topPositions.map((p) => p.position), ...(others ? [`Others (${stats.positions.length - TOP} titles)`] : [])]
+const positionData = [...topPositions.map((p) => p.total), ...(others ? [others] : [])]
+
+// Hires vs separations, last 10 years
+const thisYear = Number(todayYmd().slice(0, 4))
+const years = Array.from({ length: 10 }, (_, i) => thisYear - 9 + i)
+const hires = years.map((y) => stats.hires.find((h) => h.year === y)?.count ?? 0)
+const separations = years.map((y) => stats.separations.filter((s) => s.year === y).reduce((sum, s) => sum + s.count, 0))
+
+const inPipeline = onboarding.byStatus.filter((s) => ['Pending', 'For Interview', 'For OJT'].includes(s.status)).reduce((a, b) => a + b.count, 0)
+const incomplete = onboarding.byRequirements.find((r) => r.status === 'Incomplete')?.count ?? 0
+const filterNote = [branchId && branches.docs.find((b) => b.id === branchId)?.name, classification].filter(Boolean).join(' · ')
+---
+<App title="Dashboard" heading="Employee statistics" description="Headcount by employment status, gender, classification and position.">
+  <form method="get" class="mb-6 flex flex-wrap items-end gap-3" data-autosubmit>
+    <div>
+      <label class="label" for="branch">Branch</label>
+      <select class="input min-w-48" id="branch" name="branch">
+        <option value="">All branches</option>
+        {branches.docs.map((b) => <option value={b.id} selected={b.id === branchId}>{b.name}</option>)}
+      </select>
+    </div>
+    <div>
+      <label class="label" for="classification">Classification</label>
+      <select class="input min-w-40" id="classification" name="classification">
+        <option value="">All classifications</option>
+        {CLASSIFICATIONS.map((c) => <option selected={c === classification}>{c}</option>)}
+      </select>
+    </div>
+    <noscript><button class="btn-secondary">Apply</button></noscript>
+    {(branchId || classification) && <a href="/" class="btn-ghost">Clear filters</a>}
+  </form>
+
+  <div class="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+    <StatTile label="Total employees" value={stats.total} note={filterNote || 'All records'} href="/employees" />
+    {
+      EMPLOYMENT_STATUSES.map((s) => (
+        <StatTile
+          label={s}
+          value={statusCount(s)}
+          tone={tone[s]}
+          note={stats.total ? `${Math.round((statusCount(s) / stats.total) * 1000) / 10}% of total` : undefined}
+          href={`/employees?status=${s}${branchId ? `&branch=${branchId}` : ''}${classification ? `&classification=${classification}` : ''}`}
+        />
+      ))
+    }
+  </div>
+
+  <div class="mt-6 grid gap-4 xl:grid-cols-2">
+    <SplitBars title="Male and female employees" subtitle="Share of each gender, overall and by employment status" rows={genderRows} />
+    <BarChart
+      title="Classification by employment status"
+      subtitle="COS, Contractual and Regular employees in each status"
+      spec={{ labels: [...EMPLOYMENT_STATUSES], series: classSeries, stacked: true, unit: 'employees' }}
+    />
+  </div>
+
+  <div class="mt-4 grid gap-4 xl:grid-cols-5">
+    <div class="xl:col-span-3">
+      <BarChart
+        title="Position / designation"
+        subtitle={`Active employees per title${others ? `, top ${TOP} shown` : ''}`}
+        spec={{ labels: positionLabels, series: [{ label: 'Active employees', data: positionData, slot: 1 }], horizontal: true, valueLabels: true, unit: 'employees' }}
+        emptyText="No active employees yet."
+      />
+    </div>
+    <div class="space-y-4 xl:col-span-2">
+      <BarChart
+        title="Hires and separations per year"
+        subtitle="Separated = resigned, retired or terminated (by last day of service)"
+        spec={{
+          labels: years.map(String),
+          series: [
+            { label: 'Hired', data: hires, slot: 1 },
+            { label: 'Separated', data: separations, slot: 2 },
+          ],
+          unit: 'employees',
+        }}
+        height={240}
+      />
+      <section class="card p-4 sm:p-5">
+        <h2 class="text-sm font-semibold">Onboarding</h2>
+        <div class="mt-3 grid grid-cols-2 gap-3">
+          <a href="/onboarding" class="rounded-lg bg-surface-2 p-3 hover:bg-primary-soft">
+            <p class="text-xs text-muted">Applicants in progress</p>
+            <p class="mt-1 text-2xl font-semibold">{inPipeline}</p>
+          </a>
+          <a href="/onboarding?requirements=Incomplete" class="rounded-lg bg-surface-2 p-3 hover:bg-primary-soft">
+            <p class="text-xs text-muted">Incomplete requirements</p>
+            <p class="mt-1 text-2xl font-semibold">{incomplete}</p>
+          </a>
+        </div>
+      </section>
+    </div>
+  </div>
+</App>
+
+<script>
+  document.querySelectorAll<HTMLFormElement>('form[data-autosubmit]').forEach((form) => {
+    form.addEventListener('change', () => form.requestSubmit())
+  })
+</script>

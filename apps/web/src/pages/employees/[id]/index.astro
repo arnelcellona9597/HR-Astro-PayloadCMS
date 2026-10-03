@@ -1,0 +1,206 @@
+---
+import { formatDate, initials, todayYmd } from '@hr/shared'
+import { EMPLOYEES } from '@hr/shared/modules'
+import { allowanceForYear } from '@hr/cms/server/leave-settings'
+
+import Icon from '../../../components/Icon.astro'
+import App from '../../../layouts/App.astro'
+import { handleDelete } from '../../../lib/crud'
+import { relName, statusBadge } from '../../../lib/format'
+
+const { payload, user } = Astro.locals
+const id = Number(Astro.params.id)
+const emp = await payload.findByID({ collection: 'employees', id, depth: 1, user, overrideAccess: false, disableErrors: true })
+if (!emp) return new Response(null, { status: 404 })
+
+if (Astro.request.method === 'POST') {
+  return handleDelete(Astro, 'employees', id, `Employee ${emp.fullName}`, '/employees', `/employees/${id}`)
+}
+
+const isAdmin = user?.role === 'super-admin' || user?.role === 'hr-admin'
+const year = Number(todayYmd().slice(0, 4))
+const byEmployee = { employee: { equals: id } }
+const [leaves, leaveSettings, itr, sworn, pds, ipcr, history] = await Promise.all([
+  payload.find({ collection: 'wellness-leaves', where: byEmployee, sort: '-inclusiveDateFrom', limit: 50, depth: 0, user, overrideAccess: false }),
+  payload.findGlobal({ slug: 'leave-settings', user, overrideAccess: false }),
+  payload.find({ collection: 'itr-submissions', where: byEmployee, sort: '-year', limit: 20, depth: 0, user, overrideAccess: false }),
+  payload.find({ collection: 'sworn-declarations', where: byEmployee, sort: '-year', limit: 20, depth: 0, user, overrideAccess: false }),
+  payload.find({ collection: 'pds-submissions', where: byEmployee, sort: '-year', limit: 20, depth: 0, user, overrideAccess: false }),
+  payload.find({ collection: 'ipcr-ratings', where: byEmployee, sort: '-year', limit: 20, depth: 0, user, overrideAccess: false }),
+  isAdmin
+    ? payload.find({
+        collection: 'audit-logs',
+        where: { and: [{ collectionSlug: { equals: 'employees' } }, { docId: { equals: String(id) } }] },
+        sort: '-createdAt',
+        limit: 30,
+        depth: 0,
+        user,
+        overrideAccess: false,
+      })
+    : null,
+])
+
+const allowance = allowanceForYear(leaveSettings, year)
+const usedThisYear = leaves.docs
+  .filter((l) => l.status === 'Approved' || l.status === 'Pending')
+  .reduce((sum, l) => sum + Number((l.daysByYear as Record<string, number> | null)?.[String(year)] ?? 0), 0)
+
+const photo = emp.profilePicture && typeof emp.profilePicture === 'object' ? emp.profilePicture : null
+const sections = [...new Set(EMPLOYEES.fields.map((f) => f.section!))]
+const display = (name: string, kind: string): string => {
+  const v = (emp as unknown as Record<string, unknown>)[name]
+  if (v == null || v === '') return '—'
+  if (kind === 'date') return formatDate(v)
+  if (kind === 'branch') return relName(v) || '—'
+  return String(v)
+}
+const requirementYears = [...new Set([...itr.docs, ...sworn.docs, ...pds.docs, ...ipcr.docs].map((r) => r.year))].sort((a, b) => b - a)
+const has = (docs: { year: number; dateSubmitted?: string | null }[], y: number) => docs.find((d) => d.year === y)
+---
+<App title={emp.fullName ?? 'Employee'} heading={emp.fullName ?? 'Employee'} back={{ href: '/employees', label: 'Employees' }}>
+  <Fragment slot="actions">
+    <a class="btn-secondary" href={`/leave/new?employee=${id}`}><Icon name="calendar" /> File leave</a>
+    <a class="btn-primary" href={`/employees/${id}/edit`}><Icon name="edit" /> Edit</a>
+    {
+      isAdmin && (
+        <form method="post" data-confirm={`Delete ${emp.fullName}? This cannot be undone. Consider setting the status to Resigned/Retired/Terminated instead.`}>
+          <button class="btn-danger"><Icon name="trash" /> Delete</button>
+        </form>
+      )
+    }
+  </Fragment>
+
+  <div class="card mb-6 flex flex-wrap items-center gap-5 p-5">
+    {
+      photo ? (
+        <img src={`/files/${photo.id}`} alt={`Profile picture of ${emp.fullName}`} class="size-24 rounded-2xl object-cover" />
+      ) : (
+        <div class="flex size-24 items-center justify-center rounded-2xl bg-primary-soft text-2xl font-semibold text-primary-ink">{initials(emp)}</div>
+      )
+    }
+    <div class="min-w-0 flex-1">
+      <p class="font-mono text-sm text-muted">{emp.employeeId}</p>
+      <p class="text-lg font-semibold">{emp.position || 'No position recorded'}</p>
+      <p class="text-sm text-fg-2">{relName(emp.station) || 'No station'}{emp.region ? ` · ${emp.region}` : ''}</p>
+      <div class="mt-2 flex flex-wrap gap-2">
+        <span class={statusBadge(emp.employmentStatus)}>{emp.employmentStatus}</span>
+        <span class="badge-neutral">{emp.classification}</span>
+        {emp.lengthOfService && <span class="badge-neutral">{emp.lengthOfService} in service</span>}
+        {emp.age != null && <span class="badge-neutral">{emp.age} years old</span>}
+      </div>
+    </div>
+    <div class="rounded-xl bg-surface-2 px-4 py-3 text-center">
+      <p class="text-xs text-muted">Wellness leave {year}</p>
+      <p class="text-2xl font-semibold tabular">{allowance - usedThisYear}<span class="text-sm font-normal text-muted"> / {allowance} left</span></p>
+    </div>
+  </div>
+
+  <div class="grid gap-6 xl:grid-cols-3">
+    <div class="space-y-6 xl:col-span-2">
+      {
+        sections.map((section) => (
+          <section class="card p-5">
+            <h2 class="mb-4 text-sm font-semibold">{section}</h2>
+            <dl class="grid gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+              {EMPLOYEES.fields
+                .filter((f) => f.section === section)
+                .map((f) => (
+                  <div class={f.kind === 'textarea' || f.name.toLowerCase().includes('address') ? 'sm:col-span-2 lg:col-span-3' : ''}>
+                    <dt class="text-xs text-muted">{f.label}</dt>
+                    <dd class:list={['mt-0.5 text-sm', f.kind === 'govId' && 'font-mono']}>{display(f.name, f.kind)}</dd>
+                  </div>
+                ))}
+            </dl>
+          </section>
+        ))
+      }
+    </div>
+
+    <div class="space-y-6">
+      <section class="card overflow-hidden">
+        <header class="flex items-center justify-between p-4">
+          <h2 class="text-sm font-semibold">Wellness leave</h2>
+          <a href={`/leave?employee=${id}`} class="text-xs text-primary-ink hover:underline">View all</a>
+        </header>
+        {
+          leaves.docs.length === 0 ? (
+            <p class="px-4 pb-4 text-sm text-muted">No filings yet.</p>
+          ) : (
+            <div class="overflow-x-auto"><table class="table">
+              <thead><tr><th>Dates</th><th class="text-right">Days</th><th>Status</th></tr></thead>
+              <tbody>
+                {leaves.docs.slice(0, 8).map((l) => (
+                  <tr>
+                    <td class="whitespace-nowrap"><a href={`/leave/${l.id}`} class="hover:text-primary-ink">{formatDate(l.inclusiveDateFrom)}{l.inclusiveDateTo !== l.inclusiveDateFrom && <span class="text-muted"> to {formatDate(l.inclusiveDateTo).replace(/, \d{4}$/, '')}</span>}</a></td>
+                    <td class="text-right tabular">{l.days}</td>
+                    <td><span class={statusBadge(l.status)}>{l.status}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table></div>
+          )
+        }
+      </section>
+
+      <section class="card overflow-hidden">
+        <header class="p-4"><h2 class="text-sm font-semibold">Annual requirements</h2></header>
+        {
+          requirementYears.length === 0 ? (
+            <p class="px-4 pb-4 text-sm text-muted">No records yet.</p>
+          ) : (
+            <div class="overflow-x-auto"><table class="table">
+              <thead><tr><th>Year</th><th>ITR</th><th>Sworn</th><th>PDS</th><th>IPCR</th></tr></thead>
+              <tbody>
+                {requirementYears.map((y) => (
+                  <tr>
+                    <td class="tabular">{y}</td>
+                    {[itr.docs, sworn.docs, pds.docs].map((docs) => {
+                      const r = has(docs, y)
+                      return <td>{r?.dateSubmitted ? <span class="badge-success" title={formatDate(r.dateSubmitted)}>✓</span> : r ? <span class="badge-warning">Pending</span> : <span class="text-muted">—</span>}</td>
+                    })}
+                    <td class="tabular">{ipcr.docs.filter((r) => r.year === y).map((r) => r.rating?.toFixed(3)).filter(Boolean).join(', ') || <span class="text-muted">—</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table></div>
+          )
+        }
+      </section>
+
+      {
+        history && (
+          <section class="card p-4">
+            <h2 class="mb-3 text-sm font-semibold">Change history</h2>
+            {history.docs.length === 0 ? (
+              <p class="text-sm text-muted">No changes recorded.</p>
+            ) : (
+              <ol class="space-y-3">
+                {history.docs.map((h) => {
+                  const changes = (h.changes ?? {}) as Record<string, { from: unknown; to: unknown }>
+                  return (
+                    <li class="text-sm">
+                      <p>
+                        <span class="font-medium">{h.userName ?? 'System'}</span>{' '}
+                        <span class="text-muted">{h.action === 'create' ? 'created this record' : h.action === 'import' ? 'imported this record' : 'updated'}</span>
+                      </p>
+                      <p class="text-xs text-muted">{new Date(h.createdAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}</p>
+                      {h.action === 'update' && (
+                        <ul class="mt-1 space-y-0.5 text-xs text-fg-2">
+                          {Object.entries(changes).slice(0, 6).map(([k, c]) => (
+                            <li>
+                              <span class="font-medium">{EMPLOYEES.fields.find((f) => f.name === k)?.label ?? k}</span>: {String(c.from ?? '—').slice(0, 40)} → {String(c.to ?? '—').slice(0, 40)}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </li>
+                  )
+                })}
+              </ol>
+            )}
+          </section>
+        )
+      }
+    </div>
+  </div>
+</App>

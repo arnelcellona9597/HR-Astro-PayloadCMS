@@ -1,0 +1,32 @@
+---
+import { todayYmd } from '@hr/shared'
+import { COMPLIANCE_ROUTES } from '@hr/shared/modules'
+
+import ModuleForm from '../../../components/ModuleForm.astro'
+import App from '../../../layouts/App.astro'
+import { employeeChoices } from '../../../lib/choices'
+import { handleSave } from '../../../lib/crud'
+
+const route = Astro.params.type!
+const mod = COMPLIANCE_ROUTES[route]
+if (!mod) return new Response(null, { status: 404 })
+const { payload } = Astro.locals
+const year = Number(Astro.url.searchParams.get('year')) || Number(todayYmd().slice(0, 4))
+const fields = mod.fields.map((f) => (f.name === 'employee' ? { ...f, label: 'Employee' } : f))
+const state = await handleSave(Astro, {
+  collection: mod.slug as 'itr-submissions',
+  fields,
+  initial: { year: String(year), employee: Astro.url.searchParams.get('employee') ?? '' },
+  successMessage: (d) => `${mod.title} record for ${d.firstName} ${d.lastName} (${d.year}) was saved.`,
+  redirectTo: (d) => `/requirements/${route}?year=${d.year}`,
+})
+if (state.redirect) return state.redirect
+const employees = await employeeChoices(payload, true)
+---
+<App title={`Add ${mod.title}`} heading={`Add ${mod.title} record`} back={{ href: `/requirements/${route}?year=${year}`, label: mod.title }}>
+  <div class="max-w-5xl">
+    <ModuleForm fields={fields} values={state.values} errors={state.errors} formError={state.formError} choices={{ employee: employees }} cancelHref={`/requirements/${route}?year=${year}`} submitLabel="Save record">
+      <p class="text-sm text-muted">Name, station, job title and TIN are copied from the employee record when left blank.</p>
+    </ModuleForm>
+  </div>
+</App>

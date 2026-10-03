@@ -1,0 +1,47 @@
+---
+import { COMPLIANCE_ROUTES } from '@hr/shared/modules'
+
+import Icon from '../../../components/Icon.astro'
+import ModuleForm from '../../../components/ModuleForm.astro'
+import App from '../../../layouts/App.astro'
+import { employeeChoices } from '../../../lib/choices'
+import { docToValues, handleDelete, handleSave } from '../../../lib/crud'
+
+const route = Astro.params.type!
+const mod = COMPLIANCE_ROUTES[route]
+if (!mod) return new Response(null, { status: 404 })
+const slug = mod.slug as 'itr-submissions'
+const { payload, user } = Astro.locals
+const id = Number(Astro.params.id)
+const doc = await payload.findByID({ collection: slug, id, depth: 0, user, overrideAccess: false, disableErrors: true })
+if (!doc) return new Response(null, { status: 404 })
+if (Astro.request.method === 'POST' && Astro.url.searchParams.get('action') === 'delete') {
+  return handleDelete(Astro, slug, id, 'The record', `/requirements/${route}?year=${doc.year}`, `/requirements/${route}/${id}`)
+}
+const fields = mod.fields.map((f) => (f.name === 'employee' ? { ...f, label: 'Employee' } : f))
+const state = await handleSave(Astro, {
+  collection: slug,
+  fields,
+  id,
+  initial: docToValues(doc as never, fields),
+  successMessage: () => 'Record updated.',
+  redirectTo: (d) => `/requirements/${route}?year=${d.year}`,
+})
+if (state.redirect) return state.redirect
+const employees = await employeeChoices(payload, true)
+const isAdmin = user?.role === 'super-admin' || user?.role === 'hr-admin'
+const adjectival = (doc as { adjectivalRating?: string }).adjectivalRating
+---
+<App title={mod.title} heading={`${mod.title}: ${doc.firstName} ${doc.lastName} (${doc.year})`} back={{ href: `/requirements/${route}?year=${doc.year}`, label: mod.title }}>
+  <Fragment slot="actions">
+    {adjectival && <span class="badge-primary">{adjectival}</span>}
+    {isAdmin && (
+      <form method="post" action={`/requirements/${route}/${id}?action=delete`} data-confirm="Delete this record?">
+        <button class="btn-danger"><Icon name="trash" /> Delete</button>
+      </form>
+    )}
+  </Fragment>
+  <div class="max-w-5xl">
+    <ModuleForm fields={fields} values={state.values} errors={state.errors} formError={state.formError} choices={{ employee: employees }} cancelHref={`/requirements/${route}?year=${doc.year}`} submitLabel="Save changes" />
+  </div>
+</App>

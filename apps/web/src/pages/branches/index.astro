@@ -1,0 +1,105 @@
+---
+import { branchCounts } from '@hr/cms/server/stats'
+import { CLASSIFICATIONS } from '@hr/shared'
+
+import BarChart from '../../components/charts/BarChart.astro'
+import EmptyState from '../../components/EmptyState.astro'
+import Icon from '../../components/Icon.astro'
+import App from '../../layouts/App.astro'
+
+const { payload } = Astro.locals
+const scope = Astro.url.searchParams.get('scope') === 'all' ? 'all' : 'active'
+const [branches, counts] = await Promise.all([
+  payload.find({ collection: 'branches', limit: 1000, depth: 0, sort: 'name', overrideAccess: true }),
+  branchCounts(payload, scope),
+])
+const zero = { COS: 0, Contractual: 0, Regular: 0, total: 0 }
+const rows = branches.docs.map((b) => ({ ...b, counts: counts.byBranch.get(b.id) ?? zero }))
+const totals = rows.reduce(
+  (t, r) => ({ COS: t.COS + r.counts.COS!, Contractual: t.Contractual + r.counts.Contractual!, Regular: t.Regular + r.counts.Regular!, total: t.total + r.counts.total! }),
+  { COS: 0, Contractual: 0, Regular: 0, total: 0 },
+)
+const scopeLabel = scope === 'all' ? 'all employees (any status)' : 'active employees'
+---
+<App title="Branches" heading="Company branches" description={`Each branch's address and its ${scopeLabel} by classification.`}>
+  <Fragment slot="actions">
+    <div class="flex rounded-lg border border-line bg-surface p-0.5 text-sm" role="group" aria-label="Count">
+      <a href="/branches" class:list={['rounded-md px-3 py-1.5', scope === 'active' ? 'bg-primary-soft font-medium text-primary-ink' : 'text-fg-2']}>Active only</a>
+      <a href="/branches?scope=all" class:list={['rounded-md px-3 py-1.5', scope === 'all' ? 'bg-primary-soft font-medium text-primary-ink' : 'text-fg-2']}>All statuses</a>
+    </div>
+    <a class="btn-primary" href="/branches/new"><Icon name="plus" /> Add branch</a>
+  </Fragment>
+
+  {
+    rows.length === 0 ? (
+      <div class="card">
+        <EmptyState title="No branches yet" text="Add the stations, divisions or units employees are assigned to.">
+          <a class="btn-primary" href="/branches/new">Add branch</a>
+        </EmptyState>
+      </div>
+    ) : (
+      <>
+        <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {rows.map((b) => (
+            <a href={`/branches/${b.id}`} class="card group flex flex-col p-5 transition-colors hover:border-primary-ink">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <h2 class="truncate font-semibold group-hover:text-primary-ink">{b.name}</h2>
+                  <p class="mt-0.5 text-sm text-muted">{b.address || 'No address recorded'}</p>
+                </div>
+                {b.code && <span class="badge-neutral font-mono">{b.code}</span>}
+              </div>
+              <p class="mt-4 text-3xl font-semibold tabular">
+                {b.counts.total}
+                <span class="text-sm font-normal text-muted"> employees</span>
+              </p>
+              <dl class="mt-3 grid grid-cols-3 gap-2 text-center">
+                {CLASSIFICATIONS.map((c, i) => (
+                  <div class="rounded-lg bg-surface-2 px-2 py-2">
+                    <dt class="flex items-center justify-center gap-1.5 text-xs text-muted">
+                      <span class="inline-block size-2 rounded-sm" style={`background: var(--series-${i + 1})`} />
+                      {c}
+                    </dt>
+                    <dd class="mt-0.5 text-lg font-semibold tabular">{b.counts[c]}</dd>
+                  </div>
+                ))}
+              </dl>
+              {b.region && <p class="mt-3 text-xs text-muted">{b.region}{b.contactNumber ? ` · ${b.contactNumber}` : ''}</p>}
+            </a>
+          ))}
+        </div>
+
+        <div class="mt-6 grid gap-4 xl:grid-cols-3">
+          <div class="xl:col-span-2">
+            <BarChart
+              title="Employees per branch"
+              subtitle={`By classification — ${scopeLabel}`}
+              spec={{
+                labels: rows.map((r) => r.name),
+                series: CLASSIFICATIONS.map((c, i) => ({ label: c, slot: (i + 1) as 1 | 2 | 3, data: rows.map((r) => r.counts[c] ?? 0) })),
+                stacked: true,
+                horizontal: true,
+                unit: 'employees',
+              }}
+            />
+          </div>
+          <section class="card p-5">
+            <h2 class="text-sm font-semibold">Totals</h2>
+            <dl class="mt-3 space-y-2 text-sm">
+              {CLASSIFICATIONS.map((c) => (
+                <div class="flex justify-between"><dt class="text-fg-2">{c}</dt><dd class="font-medium tabular">{totals[c]}</dd></div>
+              ))}
+              <div class="flex justify-between border-t border-line pt-2"><dt class="font-medium">All branches</dt><dd class="font-semibold tabular">{totals.total}</dd></div>
+              {counts.unassigned.total! > 0 && (
+                <div class="flex justify-between text-warning">
+                  <dt><a class="hover:underline" href="/employees?status=Active">Not assigned to a branch</a></dt>
+                  <dd class="tabular">{counts.unassigned.total}</dd>
+                </div>
+              )}
+            </dl>
+          </section>
+        </div>
+      </>
+    )
+  }
+</App>

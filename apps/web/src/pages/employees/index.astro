@@ -1,0 +1,242 @@
+---
+import {
+  BLOOD_TYPES,
+  CIVIL_STATUSES,
+  CLASSIFICATIONS,
+  EDUCATIONAL_ATTAINMENTS,
+  EMPLOYMENT_STATUSES,
+  formatDate,
+  GENDERS,
+  initials,
+  REGIONS,
+} from '@hr/shared'
+
+import EmptyState from '../../components/EmptyState.astro'
+import Icon from '../../components/Icon.astro'
+import Pagination from '../../components/Pagination.astro'
+import SortHeader from '../../components/SortHeader.astro'
+import App from '../../layouts/App.astro'
+import { relName, statusBadge } from '../../lib/format'
+import { activeFilterCount, employeeWhere, parseEmployeeQuery } from '../../lib/search'
+
+const { payload, user } = Astro.locals
+const q = parseEmployeeQuery(Astro.url.searchParams)
+
+const [result, branches] = await Promise.all([
+  payload.find({
+    collection: 'employees',
+    where: employeeWhere(q),
+    sort: [q.sort, 'id'],
+    page: q.page,
+    limit: q.limit,
+    depth: 1,
+    user,
+    overrideAccess: false,
+    select: {
+      employeeId: true,
+      fullName: true,
+      position: true,
+      station: true,
+      classification: true,
+      employmentStatus: true,
+      dateHired: true,
+      lastDayOfService: true,
+      lengthOfService: true,
+      profilePicture: true,
+      firstName: true,
+      lastName: true,
+      gender: true,
+    },
+    populate: { branches: { name: true }, media: { filename: true } },
+  }),
+  payload.find({ collection: 'branches', limit: 500, depth: 0, sort: 'name', overrideAccess: true, select: { name: true } }),
+])
+
+const filters = activeFilterCount(q)
+const exportQuery = new URLSearchParams(Astro.url.searchParams)
+exportQuery.delete('page')
+exportQuery.set('module', 'employees')
+
+const checks = (name: string, values: readonly string[], selected: string[]) => ({ name, values, selected })
+const groups = [
+  { label: 'Employment status', ...checks('status', EMPLOYMENT_STATUSES, q.status) },
+  { label: 'Classification', ...checks('classification', CLASSIFICATIONS, q.classification) },
+  { label: 'Gender', ...checks('gender', GENDERS, q.gender) },
+  { label: 'Civil status', ...checks('civilStatus', CIVIL_STATUSES, q.civilStatus) },
+  { label: 'Blood type', ...checks('bloodType', BLOOD_TYPES, q.bloodType) },
+]
+---
+<App title="Employees" heading="Employee profiles" description="Search, filter and open any employee record.">
+  <Fragment slot="actions">
+    <a class="btn-secondary" href={`/data/export?${exportQuery}`}><Icon name="download" /> Export these results</a>
+    <a class="btn-primary" href="/employees/new"><Icon name="plus" /> Add employee</a>
+  </Fragment>
+
+  <form method="get" class="card mb-4 p-4" id="search">
+    <div class="flex flex-wrap gap-3">
+      <div class="relative min-w-64 flex-1">
+        <label for="q" class="sr-only">Search</label>
+        <Icon name="search" class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
+        <input
+          class="input pl-9"
+          id="q"
+          name="q"
+          type="search"
+          value={q.q}
+          placeholder="Search name, employee ID, email, position, phone, SSS/TIN/PhilHealth/Pag-IBIG…"
+        />
+      </div>
+      <button class="btn-primary">Search</button>
+      {(q.q || filters > 0) && <a class="btn-ghost" href="/employees">Clear all</a>}
+    </div>
+
+    <details class="mt-3" open={filters > 0}>
+      <summary class="inline-flex cursor-pointer select-none items-center gap-2 text-sm font-medium text-fg-2 hover:text-fg">
+        <Icon name="filter" /> Advanced filters {filters > 0 && <span class="badge-primary">{filters} active</span>}
+      </summary>
+      <div class="mt-4 grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+        {
+          groups.map((g) => (
+            <fieldset>
+              <legend class="label">{g.label}</legend>
+              <div class="flex flex-wrap gap-x-4 gap-y-1">
+                {g.values.map((v) => (
+                  <label class="flex items-center gap-2 text-sm">
+                    <input type="checkbox" name={g.name} value={v} checked={g.selected.includes(v)} class="size-4 accent-[var(--primary)]" />
+                    {v}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          ))
+        }
+        <div>
+          <label class="label" for="branch">Station / branch</label>
+          <select class="input" id="branch" name="branch" multiple size="4">
+            {branches.docs.map((b) => <option value={b.id} selected={q.branch.includes(b.id)}>{b.name}</option>)}
+          </select>
+          <p class="field-help">Ctrl/⌘-click to pick several.</p>
+        </div>
+        <div>
+          <label class="label" for="region">Region</label>
+          <select class="input" id="region" name="region" multiple size="4">
+            {REGIONS.map((r) => <option selected={q.region.includes(r)}>{r}</option>)}
+          </select>
+        </div>
+        <div>
+          <label class="label" for="education">Educational attainment</label>
+          <select class="input" id="education" name="education" multiple size="4">
+            {EDUCATIONAL_ATTAINMENTS.map((r) => <option selected={q.education.includes(r)}>{r}</option>)}
+          </select>
+        </div>
+        <div>
+          <label class="label" for="position">Position contains</label>
+          <input class="input" id="position" name="position" value={q.position} placeholder="e.g. Engineer" />
+        </div>
+        <div class="md:col-span-2">
+          <span class="label">Date hired</span>
+          <div class="flex items-center gap-2">
+            <input class="input" type="date" name="hiredFrom" value={q.hiredFrom ?? ''} aria-label="Hired from" />
+            <span class="text-muted">to</span>
+            <input class="input" type="date" name="hiredTo" value={q.hiredTo ?? ''} aria-label="Hired to" />
+          </div>
+        </div>
+        <div>
+          <span class="label">Age (years)</span>
+          <div class="flex items-center gap-2">
+            <input class="input" type="number" min="0" max="120" name="ageMin" value={q.ageMin ?? ''} aria-label="Minimum age" placeholder="min" />
+            <span class="text-muted">to</span>
+            <input class="input" type="number" min="0" max="120" name="ageMax" value={q.ageMax ?? ''} aria-label="Maximum age" placeholder="max" />
+          </div>
+        </div>
+        <div>
+          <span class="label">Length of service (years)</span>
+          <div class="flex items-center gap-2">
+            <input class="input" type="number" min="0" max="80" name="losMin" value={q.losMin ?? ''} aria-label="Minimum years of service" placeholder="min" />
+            <span class="text-muted">to</span>
+            <input class="input" type="number" min="0" max="80" name="losMax" value={q.losMax ?? ''} aria-label="Maximum years of service" placeholder="max" />
+          </div>
+        </div>
+        <div>
+          <label class="label" for="limit">Rows per page</label>
+          <select class="input" id="limit" name="limit">
+            {[25, 50, 100].map((n) => <option value={n} selected={n === q.limit}>{n}</option>)}
+          </select>
+        </div>
+      </div>
+      <div class="mt-4 flex gap-2">
+        <button class="btn-primary">Apply filters</button>
+        <a class="btn-ghost" href="/employees">Reset</a>
+      </div>
+    </details>
+    {q.sort !== 'fullName' && <input type="hidden" name="sort" value={q.sort} />}
+  </form>
+
+  <div class="card overflow-hidden">
+    {
+      result.totalDocs === 0 ? (
+        <EmptyState title="No employees match" text={q.q || filters ? 'Try fewer filters or a different search.' : 'Add your first employee or import an Excel file.'}>
+          <a class="btn-primary" href="/employees/new">Add employee</a>
+          <a class="btn-secondary" href="/data">Import from Excel</a>
+        </EmptyState>
+      ) : (
+        <>
+          <div class="overflow-x-auto">
+            <table class="table">
+              <thead>
+                <tr>
+                  <SortHeader field="employeeId" label="Employee ID" />
+                  <SortHeader field="fullName" label="Name" />
+                  <SortHeader field="position" label="Position" />
+                  <th scope="col">Station</th>
+                  <SortHeader field="classification" label="Classification" />
+                  <SortHeader field="employmentStatus" label="Status" />
+                  <SortHeader field="dateHired" label="Date hired" />
+                  <th scope="col">Service</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.docs.map((e) => {
+                  const photo = e.profilePicture && typeof e.profilePicture === 'object' ? e.profilePicture : null
+                  return (
+                    <tr class="cursor-pointer" data-href={`/employees/${e.id}`}>
+                      <td class="whitespace-nowrap font-mono text-xs text-fg-2">{e.employeeId}</td>
+                      <td>
+                        <a href={`/employees/${e.id}`} class="flex items-center gap-3 font-medium hover:text-primary-ink">
+                          {photo ? (
+                            <img src={`/files/${photo.id}`} alt="" class="size-8 shrink-0 rounded-full object-cover" loading="lazy" />
+                          ) : (
+                            <span class="flex size-8 shrink-0 items-center justify-center rounded-full bg-surface-2 text-xs font-semibold text-fg-2">
+                              {initials(e)}
+                            </span>
+                          )}
+                          <span>{e.fullName}</span>
+                        </a>
+                      </td>
+                      <td>{e.position}</td>
+                      <td class="text-fg-2">{relName(e.station)}</td>
+                      <td><span class="badge-neutral">{e.classification}</span></td>
+                      <td><span class={statusBadge(e.employmentStatus)}>{e.employmentStatus}</span></td>
+                      <td class="whitespace-nowrap text-fg-2 tabular">{formatDate(e.dateHired)}</td>
+                      <td class="whitespace-nowrap text-fg-2">{e.lengthOfService}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          <Pagination page={result.page ?? 1} totalPages={result.totalPages} totalDocs={result.totalDocs} limit={q.limit} />
+        </>
+      )
+    }
+  </div>
+</App>
+
+<script>
+  document.querySelectorAll<HTMLTableRowElement>('tr[data-href]').forEach((row) => {
+    row.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('a, button, input')) return
+      location.href = row.dataset.href!
+    })
+  })
+</script>

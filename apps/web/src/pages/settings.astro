@@ -1,0 +1,206 @@
+---
+import { contrastWarnings, HEX_RE, PALETTE_KEYS, PALETTE_PRESETS, resolvePalette, THEME_MODES, type Palette } from '@hr/shared'
+
+import App from '../layouts/App.astro'
+import { toFormErrors } from '../lib/errors'
+import { setFlash } from '../lib/flash'
+import { checkImage, IMAGE_TYPES, saveUpload } from '../lib/upload'
+
+const { payload, user, settings } = Astro.locals
+let error = ''
+let values = {
+  companyName: settings.companyName ?? '',
+  tagline: settings.tagline ?? '',
+  defaultTheme: settings.defaultTheme ?? 'system',
+  palette: resolvePalette(settings.palette),
+}
+
+if (Astro.request.method === 'POST') {
+  const fd = await Astro.request.formData()
+  const palette = Object.fromEntries(PALETTE_KEYS.map((k) => [k, String(fd.get(k) ?? '').trim().toLowerCase()])) as Palette
+  values = {
+    companyName: String(fd.get('companyName') ?? '').trim(),
+    tagline: String(fd.get('tagline') ?? '').trim(),
+    defaultTheme: String(fd.get('defaultTheme')) as never,
+    palette,
+  }
+  const bad = PALETTE_KEYS.filter((k) => !HEX_RE.test(palette[k]))
+  const logo = fd.get('logo') as File | null
+  const logoError = checkImage(logo, 2 * 1024 * 1024, IMAGE_TYPES)
+  if (!values.companyName) error = 'Enter the company name.'
+  else if (bad.length) error = `Use hex colors like #1d4ed8 for: ${bad.join(', ')}.`
+  else if (logoError) error = logoError
+  else {
+    try {
+      let logoId: number | null | undefined
+      if (logo && logo.size) logoId = await saveUpload(payload, user, logo, `${values.companyName} logo`, true)
+      else if (fd.get('removeLogo') === 'on') logoId = null
+      await payload.updateGlobal({
+        slug: 'site-settings',
+        data: {
+          companyName: values.companyName,
+          tagline: values.tagline || null,
+          defaultTheme: values.defaultTheme,
+          palette,
+          ...(logoId !== undefined ? { logo: logoId } : {}),
+        },
+        user,
+        overrideAccess: false,
+      })
+      setFlash(Astro.cookies, { type: 'success', message: 'Branding saved. The new look applies to everyone right away.' })
+      return Astro.redirect('/settings')
+    } catch (err) {
+      const fe = toFormErrors(err)
+      error = Object.values(fe.fields)[0] ?? fe.form ?? 'Could not save.'
+    }
+  }
+  Astro.response.status = 400
+}
+const warnings = contrastWarnings(values.palette)
+const logo = settings.logo && typeof settings.logo === 'object' ? settings.logo : null
+const LABELS: Record<string, string> = {
+  primary: 'Primary (buttons, links, highlights)',
+  secondary: 'Secondary',
+  accent: 'Accent',
+  success: 'Success',
+  warning: 'Warning',
+  danger: 'Danger',
+}
+---
+<App title="Branding & Theme" heading="Branding & theme" description="Company name, logo, colors and the default light/dark mode for everyone.">
+  {error && <div class="mb-4 rounded-lg bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{error}</div>}
+  <form method="post" enctype="multipart/form-data" class="grid gap-6 xl:grid-cols-3" data-dirty-guard>
+    <div class="space-y-6 xl:col-span-2">
+      <fieldset class="card space-y-4 p-5">
+        <legend class="px-1 text-sm font-semibold">Company</legend>
+        <div>
+          <label class="label" for="companyName">Company name</label>
+          <input class="input" id="companyName" name="companyName" required maxlength="120" value={values.companyName} />
+        </div>
+        <div>
+          <label class="label" for="tagline">Tagline (optional)</label>
+          <input class="input" id="tagline" name="tagline" maxlength="160" value={values.tagline} placeholder="Shown under the name on the sign-in page" />
+        </div>
+        <div>
+          <span class="label">Logo</span>
+          <div class="flex flex-wrap items-center gap-4">
+            {logo ? <img src={`/files/${logo.id}`} alt="Current logo" class="h-14 w-auto max-w-40 rounded-lg border border-line bg-surface-2 object-contain p-1" /> : <span class="text-sm text-muted">No logo — initials are shown instead.</span>}
+            <input class="input max-w-sm" type="file" name="logo" accept="image/png,image/jpeg,image/webp,image/gif" aria-label="Upload logo" />
+            {logo && <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="removeLogo" class="size-4" /> Remove logo</label>}
+          </div>
+          <p class="field-help">PNG, JPG or WEBP up to 2 MB. A square or wide logo on a transparent background works best.</p>
+        </div>
+      </fieldset>
+
+      <fieldset class="card p-5">
+        <legend class="px-1 text-sm font-semibold">Color palette</legend>
+        <div class="mb-4 flex flex-wrap gap-2">
+          {PALETTE_PRESETS.map((preset) => (
+            <button type="button" class="btn-secondary btn-sm" data-preset={JSON.stringify(preset.palette)}>
+              <span class="flex">{(['primary', 'accent', 'secondary'] as const).map((k) => <span class="-ml-1 size-3.5 rounded-full border-2 border-[var(--surface)] first:ml-0" style={`background:${preset.palette[k]}`} />)}</span>
+              {preset.name}
+            </button>
+          ))}
+        </div>
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {PALETTE_KEYS.map((k) => (
+            <div>
+              <label class="label" for={`c-${k}`}>{LABELS[k]}</label>
+              <div class="flex items-center gap-2">
+                <input type="color" class="h-10 w-12 cursor-pointer rounded-lg border border-line bg-surface p-1" value={values.palette[k]} data-color-for={k} aria-label={`${k} color picker`} />
+                <input class="input font-mono" id={`c-${k}`} name={k} value={values.palette[k]} pattern="#[0-9a-fA-F]{6}" required data-hex={k} />
+              </div>
+            </div>
+          ))}
+        </div>
+        {warnings.length > 0 && (
+          <ul class="mt-4 space-y-1 rounded-lg bg-warning-soft px-4 py-3 text-sm text-warning">
+            {warnings.map((w) => <li>{w}</li>)}
+          </ul>
+        )}
+      </fieldset>
+
+      <fieldset class="card p-5">
+        <legend class="px-1 text-sm font-semibold">Default appearance</legend>
+        <div class="flex flex-wrap gap-4">
+          {THEME_MODES.map((m) => (
+            <label class="flex items-center gap-2 text-sm">
+              <input type="radio" name="defaultTheme" value={m} checked={values.defaultTheme === m} class="size-4" />
+              {m === 'system' ? 'Follow each device (system setting)' : m === 'light' ? 'Light mode' : 'Dark mode'}
+            </label>
+          ))}
+        </div>
+        <p class="field-help mt-2">Each person can still switch light/dark from the sidebar; their choice is remembered on their device.</p>
+      </fieldset>
+      <button class="btn-primary">Save branding</button>
+    </div>
+
+    <aside class="h-fit space-y-3 xl:sticky xl:top-6">
+      <p class="text-sm font-semibold">Preview</p>
+      <div id="preview" class="card space-y-3 p-5">
+        <p class="text-lg font-semibold" data-preview-name>{values.companyName}</p>
+        <div class="flex flex-wrap gap-2">
+          <span class="btn btn-sm" data-swatch="primary">Primary button</span>
+          <span class="btn btn-sm" data-swatch="accent">Accent</span>
+          <span class="btn btn-sm" data-swatch="secondary">Secondary</span>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <span class="badge" data-swatch="success">Active</span>
+          <span class="badge" data-swatch="warning">Pending</span>
+          <span class="badge" data-swatch="danger">Terminated</span>
+        </div>
+        <p class="text-sm">A <span data-link>link in text</span> uses the primary color.</p>
+      </div>
+    </aside>
+  </form>
+</App>
+
+<script>
+  const hex = /^#[0-9a-fA-F]{6}$/
+  const lum = (h: string) => {
+    const n = parseInt(h.slice(1), 16)
+    const c = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+      const s = v / 255
+      return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+    })
+    return 0.2126 * c[0]! + 0.7152 * c[1]! + 0.0722 * c[2]!
+  }
+  const onColor = (h: string) => ((lum(h) + 0.05) / 0.05 > 1.05 / (lum(h) + 0.05) ? '#000000' : '#ffffff')
+
+  function paint() {
+    document.querySelectorAll<HTMLElement>('[data-swatch]').forEach((el) => {
+      const v = (document.querySelector(`[data-hex="${el.dataset.swatch}"]`) as HTMLInputElement).value
+      if (!hex.test(v)) return
+      el.style.background = v
+      el.style.color = onColor(v)
+    })
+    const primary = (document.querySelector('[data-hex="primary"]') as HTMLInputElement).value
+    const link = document.querySelector<HTMLElement>('[data-link]')!
+    if (hex.test(primary)) link.style.color = primary
+    document.querySelector('[data-preview-name]')!.textContent = (document.getElementById('companyName') as HTMLInputElement).value
+  }
+  document.querySelectorAll<HTMLInputElement>('[data-color-for]').forEach((picker) => {
+    const text = document.querySelector<HTMLInputElement>(`[data-hex="${picker.dataset.colorFor}"]`)!
+    picker.addEventListener('input', () => {
+      text.value = picker.value
+      paint()
+    })
+    text.addEventListener('input', () => {
+      if (hex.test(text.value)) picker.value = text.value
+      paint()
+    })
+  })
+  document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const palette = JSON.parse(btn.dataset.preset!) as Record<string, string>
+      for (const [k, v] of Object.entries(palette)) {
+        ;(document.querySelector(`[data-hex="${k}"]`) as HTMLInputElement).value = v
+        ;(document.querySelector(`[data-color-for="${k}"]`) as HTMLInputElement).value = v
+      }
+      paint()
+      btn.form?.dispatchEvent(new Event('input'))
+    })
+  })
+  document.getElementById('companyName')!.addEventListener('input', paint)
+  paint()
+</script>

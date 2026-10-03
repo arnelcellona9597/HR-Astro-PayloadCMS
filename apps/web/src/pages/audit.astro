@@ -1,0 +1,81 @@
+---
+import type { Where } from 'payload'
+
+import EmptyState from '../components/EmptyState.astro'
+import Pagination from '../components/Pagination.astro'
+import App from '../layouts/App.astro'
+
+const { payload, user } = Astro.locals
+const p = Astro.url.searchParams
+const collection = p.get('collection') ?? ''
+const action = p.get('action') ?? ''
+const q = (p.get('q') ?? '').trim().slice(0, 100)
+const page = Math.max(1, Number(p.get('page')) || 1)
+const and: Where[] = []
+if (collection) and.push({ collectionSlug: { equals: collection } })
+if (action) and.push({ action: { equals: action } })
+if (q) and.push({ or: [{ docLabel: { like: q } }, { userName: { like: q } }] })
+const logs = await payload.find({ collection: 'audit-logs', where: and.length ? { and } : {}, sort: '-createdAt', page, limit: 50, depth: 0, user, overrideAccess: false })
+const COLLECTIONS = ['employees', 'branches', 'applications', 'wellness-leaves', 'itr-submissions', 'sworn-declarations', 'pds-submissions', 'ipcr-ratings', 'holidays', 'users', 'site-settings', 'leave-settings', 'import']
+const link = (slug: string, id?: string | null) => {
+  if (!id) return null
+  const map: Record<string, string> = { employees: '/employees/', branches: '/branches/', applications: '/onboarding/', 'wellness-leaves': '/leave/' }
+  return map[slug] ? `${map[slug]}${id}` : null
+}
+---
+<App title="Audit Log" heading="Audit log" description="Every change to HR records: who, what, when — with the before and after values.">
+  <form method="get" class="card mb-4 flex flex-wrap items-end gap-3 p-4">
+    <div class="min-w-56 flex-1"><label class="label" for="q">Search</label><input class="input" id="q" name="q" type="search" value={q} placeholder="Record or user name" /></div>
+    <div>
+      <label class="label" for="collection">Area</label>
+      <select class="input" id="collection" name="collection">
+        <option value="">All</option>
+        {COLLECTIONS.map((c) => <option selected={c === collection}>{c}</option>)}
+      </select>
+    </div>
+    <div>
+      <label class="label" for="action">Action</label>
+      <select class="input" id="action" name="action">
+        <option value="">All</option>
+        {['create', 'update', 'delete', 'import'].map((a) => <option selected={a === action}>{a}</option>)}
+      </select>
+    </div>
+    <button class="btn-primary">Filter</button>
+  </form>
+  <div class="card overflow-hidden">
+    {logs.totalDocs === 0 ? <EmptyState title="No activity found" /> : (
+      <>
+        <div class="overflow-x-auto">
+          <table class="table">
+            <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Area</th><th>Record</th><th>Changes</th></tr></thead>
+            <tbody>
+              {logs.docs.map((l) => {
+                const changes = l.action === 'update' || l.action === 'import' ? Object.entries((l.changes ?? {}) as Record<string, unknown>) : []
+                const href = link(l.collectionSlug, l.docId)
+                return (
+                  <tr>
+                    <td class="whitespace-nowrap tabular text-fg-2">{new Date(l.createdAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}</td>
+                    <td>{l.userName}</td>
+                    <td><span class:list={[l.action === 'delete' ? 'badge-danger' : l.action === 'create' ? 'badge-success' : 'badge-neutral']}>{l.action}</span></td>
+                    <td class="text-fg-2">{l.collectionSlug}</td>
+                    <td>{href ? <a class="hover:text-primary-ink" href={href}>{l.docLabel ?? l.docId}</a> : (l.docLabel ?? l.docId)}</td>
+                    <td class="max-w-md text-xs text-fg-2">
+                      {changes.slice(0, 5).map(([k, v]) => {
+                        const c = v as { from?: unknown; to?: unknown }
+                        return typeof c === 'object' && c && 'to' in c
+                          ? <div><span class="font-medium text-fg">{k}</span>: {String(c.from ?? '—').slice(0, 40)} → {String(c.to ?? '—').slice(0, 40)}</div>
+                          : <div><span class="font-medium text-fg">{k}</span>: {String(v).slice(0, 60)}</div>
+                      })}
+                      {changes.length > 5 && <div>+{changes.length - 5} more</div>}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        <Pagination page={logs.page ?? 1} totalPages={logs.totalPages} totalDocs={logs.totalDocs} limit={50} />
+      </>
+    )}
+  </div>
+</App>

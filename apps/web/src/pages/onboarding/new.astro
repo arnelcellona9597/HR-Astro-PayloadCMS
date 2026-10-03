@@ -1,0 +1,38 @@
+---
+import { APPLICATIONS } from '@hr/shared/modules'
+
+import ModuleForm from '../../components/ModuleForm.astro'
+import App from '../../layouts/App.astro'
+import { branchChoices } from '../../lib/choices'
+import { handleSave } from '../../lib/crud'
+
+const { payload } = Astro.locals
+const year = new Date().getFullYear()
+const count = (await payload.count({ collection: 'applications', overrideAccess: true })).totalDocs
+const initial: Record<string, string> = {
+  applicationId: `APP-${year}-${String(count + 1).padStart(3, '0')}`,
+  applicationStatus: 'Pending',
+}
+for (const f of APPLICATIONS.fields) if (f.section === 'Requirements') initial[f.name] = 'Pending'
+
+const state = await handleSave(Astro, {
+  collection: 'applications',
+  fields: APPLICATIONS.fields,
+  initial,
+  successMessage: (d) => `Application ${d.applicationId} for ${d.applicantName} was added.`,
+  redirectTo: () => '/onboarding',
+})
+if (state.redirect) return state.redirect
+const branches = await branchChoices(payload)
+---
+<App title="New application" heading="New application" back={{ href: '/onboarding', label: 'Onboarding tracker' }}>
+  <ModuleForm
+    fields={APPLICATIONS.fields}
+    values={state.values}
+    errors={state.errors}
+    formError={state.formError}
+    choices={{ station: branches }}
+    cancelHref="/onboarding"
+    submitLabel="Add application"
+  />
+</App>

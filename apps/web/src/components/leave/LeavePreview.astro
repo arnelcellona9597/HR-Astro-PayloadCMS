@@ -1,0 +1,46 @@
+---
+// Live "working days / remaining" preview under the leave form. Calls /leave/preview as dates change.
+interface Props {
+  excludeId?: number
+}
+const { excludeId } = Astro.props
+---
+<div id="leave-preview" class="card p-4 text-sm" data-exclude={excludeId ?? ''} aria-live="polite">
+  <p class="text-muted">Pick the employee and inclusive dates to see the working days and remaining balance.</p>
+</div>
+
+<script>
+  const box = document.getElementById('leave-preview')!
+  const form = box.closest('form')!
+  const get = (name: string) => (form.elements.namedItem(name) as HTMLInputElement | HTMLSelectElement | null)?.value ?? ''
+  let timer: ReturnType<typeof setTimeout> | undefined
+
+  async function update() {
+    const employee = get('employee')
+    const from = get('inclusiveDateFrom')
+    const to = get('inclusiveDateTo')
+    if (!employee || !from || !to) return
+    const params = new URLSearchParams({ employee, from, to, status: get('status') || 'Approved' })
+    if (box.dataset.exclude) params.set('exclude', box.dataset.exclude)
+    const res = await fetch(`/leave/preview?${params}`)
+    const data = await res.json()
+    box.replaceChildren()
+    const head = document.createElement('p')
+    head.className = data.ok ? 'font-medium text-success' : 'font-medium text-danger'
+    head.textContent = data.ok
+      ? `${data.days} working day${data.days === 1 ? '' : 's'} — within the allowance.`
+      : data.error
+    box.append(head)
+    for (const y of data.years ?? []) {
+      const line = document.createElement('p')
+      line.className = 'mt-1 text-fg-2 tabular'
+      line.textContent = `${y.year}: allowance ${y.allowance}, already used ${y.usedBefore}, this filing ${y.thisFiling}, remaining after ${y.remaining}`
+      box.append(line)
+    }
+  }
+  form.addEventListener('change', () => {
+    clearTimeout(timer)
+    timer = setTimeout(update, 150)
+  })
+  update()
+</script>

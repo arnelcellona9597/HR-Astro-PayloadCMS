@@ -1,0 +1,60 @@
+---
+import Auth from '../layouts/Auth.astro'
+import { safeNext, setAuthCookie } from '../lib/auth'
+
+let error = ''
+let email = ''
+const next = safeNext(Astro.url.searchParams.get('next'))
+const notice = Astro.url.searchParams.get('notice')
+
+if (Astro.request.method === 'POST') {
+  const fd = await Astro.request.formData()
+  email = String(fd.get('email') ?? '').trim().toLowerCase()
+  const password = String(fd.get('password') ?? '')
+  if (!email || !password) {
+    error = 'Enter your email and password.'
+  } else {
+    try {
+      const res = await Astro.locals.payload.login({ collection: 'users', data: { email, password } })
+      if (res.token) {
+        setAuthCookie(Astro.cookies, res.token, res.exp)
+        return Astro.redirect(safeNext(String(fd.get('next') ?? '')))
+      }
+      error = 'Could not sign in.'
+    } catch (err) {
+      const e = err as { message?: string; name?: string }
+      if (e.name === 'LockedAuth') error = 'Too many failed attempts. This account is locked for 15 minutes.'
+      else if (/approval|disabled/i.test(e.message ?? '')) error = e.message!
+      else error = 'Incorrect email or password.'
+    }
+  }
+  Astro.response.status = 400
+}
+---
+<Auth title="Sign in" subtitle="HR staff access only.">
+  {notice === 'registered' && (
+    <p class="mb-4 rounded-lg bg-success-soft px-3 py-2 text-sm text-success" role="status">
+      Registration received. A Super Admin must approve your account before you can sign in.
+    </p>
+  )}
+  {notice === 'reset' && (
+    <p class="mb-4 rounded-lg bg-success-soft px-3 py-2 text-sm text-success" role="status">Password updated. Sign in with your new password.</p>
+  )}
+  {error && <p class="mb-4 rounded-lg bg-danger-soft px-3 py-2 text-sm text-danger" role="alert">{error}</p>}
+  <form method="post" class="space-y-4">
+    <input type="hidden" name="next" value={next} />
+    <div>
+      <label class="label" for="email">Email</label>
+      <input class="input" id="email" name="email" type="email" autocomplete="username" required value={email} autofocus />
+    </div>
+    <div>
+      <div class="flex items-center justify-between">
+        <label class="label" for="password">Password</label>
+        <a href="/forgot-password" class="mb-1 text-xs text-primary-ink hover:underline">Forgot password?</a>
+      </div>
+      <input class="input" id="password" name="password" type="password" autocomplete="current-password" required />
+    </div>
+    <button class="btn-primary w-full">Sign in</button>
+  </form>
+  <Fragment slot="footer">New HR staff? <a href="/register" class="font-medium text-primary-ink hover:underline">Request an account</a></Fragment>
+</Auth>

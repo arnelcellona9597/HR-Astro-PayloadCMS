@@ -1,0 +1,29 @@
+{
+  "name": "hr-system",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.8.0",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n cms,web -c blue,magenta \"pnpm --filter @hr/cms dev\" \"pnpm --filter @hr/web dev\"",
+    "build": "pnpm --filter @hr/cms build && pnpm --filter @hr/web build",
+    "start": "node server.mjs",
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "payload": "pnpm --filter @hr/cms payload",
+    "migrate:create": "pnpm --filter @hr/cms payload migrate:create",
+    "seed": "pnpm --filter @hr/cms seed",
+    "backup": "node scripts/backup.mjs",
+    "test:e2e": "playwright test",
+    "release": "node scripts/package-release.mjs"
+  },
+  "dependencies": {
+    "dotenv": "16.4.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.58.2",
+    "concurrently": "^9.2.1"
+  }
+}

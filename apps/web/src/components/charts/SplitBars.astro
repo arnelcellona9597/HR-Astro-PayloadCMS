@@ -1,0 +1,70 @@
+---
+// 100% split bars (e.g. Male vs Female per employment status). Plain HTML so labels, counts and
+// percentages are real text; each segment carries its numbers in a hover title too.
+import type { SeriesSlot } from './types'
+
+interface Props {
+  title: string
+  subtitle?: string
+  rows: { label: string; parts: { label: string; value: number; slot: SeriesSlot }[] }[]
+}
+const { title, subtitle, rows } = Astro.props
+const legend = rows[0]?.parts.map((p) => ({ label: p.label, slot: p.slot })) ?? []
+const pct = (v: number, t: number) => (t ? Math.round((v / t) * 1000) / 10 : 0)
+---
+<section class="card p-4 sm:p-5">
+  <header class="mb-3">
+    <h2 class="text-sm font-semibold">{title}</h2>
+    {subtitle && <p class="mt-0.5 text-xs text-muted">{subtitle}</p>}
+  </header>
+  <ul class="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-fg-2" aria-label="Legend">
+    {
+      legend.map((l) => (
+        <li class="flex items-center gap-1.5">
+          <span class="inline-block size-2.5 rounded-sm" style={`background: var(--series-${l.slot})`} />
+          {l.label}
+        </li>
+      ))
+    }
+  </ul>
+  <dl class="space-y-3">
+    {
+      rows.map((row) => {
+        const total = row.parts.reduce((s, p) => s + p.value, 0)
+        return (
+          <div>
+            <dt class="mb-1 flex items-baseline justify-between text-xs">
+              <span class="font-medium text-fg-2">{row.label}</span>
+              <span class="tabular text-muted">{total.toLocaleString()} total</span>
+            </dt>
+            <dd>
+              {total === 0 ? (
+                <div class="h-6 rounded bg-surface-2" />
+              ) : (
+                <div class="flex h-6 gap-[2px] overflow-hidden rounded" role="img" aria-label={row.parts.map((p) => `${p.label} ${p.value} (${pct(p.value, total)}%)`).join(', ')}>
+                  {row.parts
+                    .filter((p) => p.value > 0)
+                    .map((p) => (
+                      <div
+                        class="min-w-[3px] transition-opacity hover:opacity-80"
+                        style={`flex: ${p.value} 1 0; background: var(--series-${p.slot})`}
+                        title={`${p.label}: ${p.value.toLocaleString()} (${pct(p.value, total)}%)`}
+                      />
+                    ))}
+                </div>
+              )}
+              <p class="mt-1 text-xs text-muted tabular">
+                {row.parts.map((p, i) => (
+                  <>
+                    {i > 0 && ' · '}
+                    {p.label} {p.value.toLocaleString()} ({pct(p.value, total)}%)
+                  </>
+                ))}
+              </p>
+            </dd>
+          </div>
+        )
+      })
+    }
+  </dl>
+</section>

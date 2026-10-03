@@ -1,0 +1,79 @@
+---
+import type { ModuleField } from '@hr/shared/modules'
+
+export type Choice = { value: string | number; label: string }
+
+interface Props {
+  field: ModuleField
+  value?: string
+  error?: string
+  /** Choices for branch / employee relationship fields. */
+  choices?: Choice[]
+  disabled?: boolean
+  /** Suggestions shown while typing (e.g. existing position titles). */
+  suggestions?: string[]
+  class?: string
+}
+const { field: f, value = '', error, choices = [], disabled, suggestions, class: cls } = Astro.props
+const id = `f-${f.name}`
+const invalid = error ? 'true' : undefined
+const describedBy = error ? `${id}-err` : f.help ? `${id}-help` : undefined
+const listId = suggestions?.length ? `${id}-list` : undefined
+const placeholders: Partial<Record<string, string>> = {
+  sss: '00-0000000-0',
+  pagibig: '0000-0000-0000',
+  philhealth: '00-000000000-0',
+  tin: '000-000-000-000',
+}
+const required = f.required && !f.fromEmployee
+---
+<div class={cls}>
+  <label class="label" for={id}>
+    {f.label}{required && <span class="text-danger" aria-hidden="true"> *</span>}
+  </label>
+  {
+    f.kind === 'textarea' ? (
+      <textarea class="input min-h-20" id={id} name={f.name} rows="3" disabled={disabled} aria-invalid={invalid} aria-describedby={describedBy}>{value}</textarea>
+    ) : f.kind === 'select' ? (
+      <select class="input" id={id} name={f.name} required={required} disabled={disabled} aria-invalid={invalid} aria-describedby={describedBy}>
+        <option value="">{required ? 'Select…' : '—'}</option>
+        {f.options?.map((o) => <option value={o} selected={o === value}>{o}</option>)}
+      </select>
+    ) : f.kind === 'branch' || f.kind === 'employee' ? (
+      <select
+        class="input"
+        id={id}
+        name={f.name}
+        required={required}
+        disabled={disabled}
+        aria-invalid={invalid}
+        aria-describedby={describedBy}
+        data-searchable={f.kind === 'employee' ? '' : undefined}
+      >
+        <option value="">{required ? 'Select…' : '—'}</option>
+        {choices.map((c) => <option value={c.value} selected={String(c.value) === value}>{c.label}</option>)}
+      </select>
+    ) : (
+      <input
+        class="input"
+        id={id}
+        name={f.name}
+        type={f.kind === 'date' ? 'date' : f.kind === 'email' ? 'email' : f.kind === 'number' || f.kind === 'year' ? 'number' : f.kind === 'phone' ? 'tel' : 'text'}
+        inputmode={f.kind === 'govId' ? 'numeric' : undefined}
+        value={value}
+        required={required}
+        disabled={disabled}
+        min={f.kind === 'year' ? 2000 : f.min}
+        max={f.kind === 'year' ? 2100 : f.max}
+        step={f.step ?? (f.kind === 'number' || f.kind === 'year' ? 1 : undefined)}
+        placeholder={f.kind === 'govId' ? placeholders[f.idKind ?? ''] : undefined}
+        list={listId}
+        autocomplete="off"
+        aria-invalid={invalid}
+        aria-describedby={describedBy}
+      />
+    )
+  }
+  {listId && <datalist id={listId}>{suggestions!.map((s) => <option value={s} />)}</datalist>}
+  {error ? <p class="field-error" id={`${id}-err`}>{error}</p> : f.help && <p class="field-help" id={`${id}-help`}>{f.help}</p>}
+</div>

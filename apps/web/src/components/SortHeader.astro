@@ -1,0 +1,20 @@
+---
+// A sortable column header that keeps the current filters in the URL.
+interface Props {
+  field: string
+  label: string
+  class?: string
+}
+const { field, label, class: cls } = Astro.props
+const current = Astro.url.searchParams.get('sort') ?? ''
+const active = current === field || current === `-${field}`
+const desc = current === `-${field}`
+const u = new URL(Astro.url)
+u.searchParams.set('sort', active && !desc ? `-${field}` : field)
+u.searchParams.delete('page')
+---
+<th scope="col" class={cls} aria-sort={active ? (desc ? 'descending' : 'ascending') : undefined}>
+  <a href={`${u.pathname}${u.search}`} class="inline-flex items-center gap-1 hover:text-fg">
+    {label}<span aria-hidden="true">{active ? (desc ? '↓' : '↑') : ''}</span>
+  </a>
+</th>

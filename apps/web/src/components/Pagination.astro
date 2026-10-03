@@ -1,0 +1,24 @@
+---
+interface Props {
+  page: number
+  totalPages: number
+  totalDocs: number
+  limit: number
+}
+const { page, totalPages, totalDocs, limit } = Astro.props
+const url = (p: number) => {
+  const u = new URL(Astro.url)
+  u.searchParams.set('page', String(p))
+  return `${u.pathname}${u.search}`
+}
+const from = totalDocs === 0 ? 0 : (page - 1) * limit + 1
+const to = Math.min(page * limit, totalDocs)
+---
+<nav class="flex flex-wrap items-center justify-between gap-3 border-t border-line px-4 py-3 text-sm" aria-label="Pagination">
+  <p class="text-muted tabular">Showing {from.toLocaleString()}–{to.toLocaleString()} of {totalDocs.toLocaleString()}</p>
+  <div class="flex items-center gap-2">
+    {page > 1 ? <a class="btn-secondary btn-sm" href={url(page - 1)}>Previous</a> : <span class="btn-secondary btn-sm opacity-50">Previous</span>}
+    <span class="text-muted tabular">Page {page} of {Math.max(totalPages, 1)}</span>
+    {page < totalPages ? <a class="btn-secondary btn-sm" href={url(page + 1)}>Next</a> : <span class="btn-secondary btn-sm opacity-50">Next</span>}
+  </div>
+</nav>

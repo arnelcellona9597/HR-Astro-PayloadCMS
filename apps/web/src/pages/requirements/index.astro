@@ -1,0 +1,44 @@
+---
+import { complianceStats } from '@hr/cms/server/stats'
+import { todayYmd } from '@hr/shared'
+import { COMPLIANCE_ROUTES } from '@hr/shared/modules'
+
+import App from '../../layouts/App.astro'
+
+const { payload } = Astro.locals
+const thisYear = Number(todayYmd().slice(0, 4))
+const year = Math.min(2100, Math.max(2000, Number(Astro.url.searchParams.get('year')) || thisYear))
+const cards = await Promise.all(
+  Object.entries(COMPLIANCE_ROUTES).map(async ([route, mod]) => ({ route, mod, stats: await complianceStats(payload, mod.slug, year) })),
+)
+const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0)
+---
+<App title="Annual Requirements" heading="Annual requirements" description="Yearly documents every active employee must submit. Compliance counts records with a Date Submitted.">
+  <div class="mb-4 flex items-center gap-2">
+    <a class="btn-secondary btn-sm" href={`/requirements?year=${year - 1}`} aria-label="Previous year">←</a>
+    <span class="text-lg font-semibold tabular">{year}</span>
+    <a class="btn-secondary btn-sm" href={`/requirements?year=${year + 1}`} aria-label="Next year">→</a>
+  </div>
+  <div class="grid gap-4 md:grid-cols-2">
+    {
+      cards.map(({ route, mod, stats }) => {
+        const p = pct(stats.complied, stats.active)
+        return (
+          <a href={`/requirements/${route}?year=${year}`} class="card group p-5 transition-colors hover:border-primary-ink">
+            <h2 class="font-semibold group-hover:text-primary-ink">{mod.title}</h2>
+            <div class="mt-4 flex items-end justify-between">
+              <p class="text-3xl font-semibold tabular">{p}%<span class="ml-2 text-sm font-normal text-muted">complied</span></p>
+              <p class="text-sm text-muted tabular">{stats.complied} of {stats.active} active</p>
+            </div>
+            <div class="mt-3 h-2.5 overflow-hidden rounded-full bg-primary-soft" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={p} aria-label={`${mod.title} compliance`}>
+              <div class="h-full rounded-full bg-primary" style={`width:${p}%`} />
+            </div>
+            <p class:list={['mt-3 text-sm', stats.missing ? 'text-warning' : 'text-success']}>
+              {stats.missing ? `${stats.missing} employee${stats.missing === 1 ? '' : 's'} still missing` : 'Everyone has complied'}
+            </p>
+          </a>
+        )
+      })
+    }
+  </div>
+</App>

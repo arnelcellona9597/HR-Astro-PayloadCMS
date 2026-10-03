@@ -1,0 +1,61 @@
+---
+import { EMPLOYEES } from '@hr/shared/modules'
+
+import ModuleForm from '../../../components/ModuleForm.astro'
+import App from '../../../layouts/App.astro'
+import { branchChoices, positionSuggestions } from '../../../lib/choices'
+import { docToValues, handleSave } from '../../../lib/crud'
+import { checkImage, saveUpload } from '../../../lib/upload'
+
+const { payload, user } = Astro.locals
+const id = Number(Astro.params.id)
+const emp = await payload.findByID({ collection: 'employees', id, depth: 1, user, overrideAccess: false, disableErrors: true })
+if (!emp) return new Response(null, { status: 404 })
+const photo = emp.profilePicture && typeof emp.profilePicture === 'object' ? emp.profilePicture : null
+
+const state = await handleSave(Astro, {
+  collection: 'employees',
+  fields: EMPLOYEES.fields,
+  id,
+  initial: docToValues(emp as never, EMPLOYEES.fields),
+  prepare: async (data, fd) => {
+    const file = fd.get('photo') as File | null
+    const err = checkImage(file)
+    if (err) return { photo: err }
+    if (file && file.size) data.profilePicture = await saveUpload(payload, user, file, `Photo of ${data.firstName} ${data.lastName}`)
+    else if (fd.get('removePhoto') === 'on') data.profilePicture = null
+  },
+  successMessage: (d) => `Changes to ${d.fullName} were saved.`,
+  redirectTo: (d) => `/employees/${d.id}`,
+})
+if (state.redirect) return state.redirect
+const [branches, positions] = await Promise.all([branchChoices(payload), positionSuggestions(payload)])
+---
+<App title={`Edit ${emp.fullName}`} heading={`Edit ${emp.fullName}`} back={{ href: `/employees/${id}`, label: 'Back to profile' }}>
+  <ModuleForm
+    fields={EMPLOYEES.fields}
+    values={state.values}
+    errors={state.errors}
+    formError={state.formError}
+    choices={{ station: branches }}
+    suggestions={{ position: positions }}
+    submitLabel="Save changes"
+    cancelHref={`/employees/${id}`}
+    enctype="multipart/form-data"
+    wide={['address', 'emergencyAddress', 'professionalEligibility']}
+  >
+    <fieldset class="card p-5" slot="before">
+      <legend class="px-1 text-sm font-semibold">Profile picture</legend>
+      <div class="flex flex-wrap items-center gap-4">
+        {photo && <img src={`/files/${photo.id}`} alt="Current profile picture" class="size-16 rounded-full object-cover" />}
+        <div class="min-w-64 flex-1">
+          <input class="input" type="file" name="photo" accept="image/png,image/jpeg,image/webp,image/gif" />
+          {state.errors.photo ? <p class="field-error">{state.errors.photo}</p> : <p class="field-help">Choose a new image to replace the current one (up to 5 MB).</p>}
+        </div>
+        {photo && (
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="removePhoto" class="size-4" /> Remove picture</label>
+        )}
+      </div>
+    </fieldset>
+  </ModuleForm>
+</App>

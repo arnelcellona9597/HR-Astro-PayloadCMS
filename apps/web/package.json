@@ -1,0 +1,26 @@
+{
+  "name": "@hr/web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev --port 4321",
+    "build": "astro build",
+    "typecheck": "astro check"
+  },
+  "dependencies": {
+    "@astrojs/node": "11.1.6",
+    "@hr/cms": "workspace:*",
+    "@hr/shared": "workspace:*",
+    "@tailwindcss/vite": "4.3.3",
+    "astro": "7.3.5",
+    "chart.js": "4.5.1",
+    "dotenv": "16.4.7",
+    "payload": "3.90.2",
+    "tailwindcss": "4.3.3"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.10",
+    "typescript": "5.7.3"
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "name": "@hr/cms",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./config": "./src/payload.config.ts",
+    "./server/*": "./src/server/*.ts",
+    "./types": "./src/payload-types.ts"
+  },
+  "scripts": {
+    "build": "cross-env NODE_OPTIONS=\"--no-deprecation --max-old-space-size=4096\" next build",
+    "dev": "cross-env NODE_OPTIONS=--no-deprecation HR_DB_PUSH=false next dev --port 3001",
+    "generate:importmap": "cross-env NODE_OPTIONS=--no-deprecation payload generate:importmap",
+    "generate:types": "cross-env NODE_OPTIONS=--no-deprecation payload generate:types",
+    "payload": "cross-env NODE_OPTIONS=--no-deprecation payload",
+    "seed": "cross-env NODE_OPTIONS=--no-deprecation tsx src/seed/index.ts",
+    "test": "cross-env NODE_OPTIONS=--no-deprecation vitest run --config ./vitest.config.mts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hr/shared": "workspace:*",
+    "@payloadcms/db-sqlite": "3.90.2",
+    "@payloadcms/email-nodemailer": "3.90.2",
+    "@payloadcms/next": "3.90.2",
+    "@payloadcms/ui": "3.90.2",
+    "cross-env": "^7.0.3",
+    "dotenv": "16.4.7",
+    "drizzle-orm": "0.45.2",
+    "exceljs": "4.4.0",
+    "graphql": "^16.8.1",
+    "next": "16.3.3",
+    "payload": "3.90.2",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.9",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "tsx": "4.23.15",
+    "typescript": "5.7.3",
+    "vitest": "4.0.18"
+  }
+}

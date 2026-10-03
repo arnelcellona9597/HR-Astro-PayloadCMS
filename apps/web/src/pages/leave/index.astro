@@ -1,0 +1,169 @@
+---
+import { allowanceForYear } from '@hr/cms/server/leave-settings'
+import { remainingAfter } from '@hr/cms/server/leave'
+import { leaveStats } from '@hr/cms/server/stats'
+import { formatDate, todayYmd } from '@hr/shared'
+import { LEAVE_STATUS_OPTIONS } from '@hr/shared/modules'
+import type { Where } from 'payload'
+
+import BarChart from '../../components/charts/BarChart.astro'
+import EmptyState from '../../components/EmptyState.astro'
+import Icon from '../../components/Icon.astro'
+import Pagination from '../../components/Pagination.astro'
+import StatTile from '../../components/StatTile.astro'
+import App from '../../layouts/App.astro'
+import { statusBadge } from '../../lib/format'
+
+const { payload, user } = Astro.locals
+const p = Astro.url.searchParams
+const thisYear = Number(todayYmd().slice(0, 4))
+const year = Math.min(2100, Math.max(2000, Number(p.get('year')) || thisYear))
+const q = (p.get('q') ?? '').trim().slice(0, 100)
+const status = (LEAVE_STATUS_OPTIONS as readonly string[]).includes(p.get('status') ?? '') ? p.get('status') : null
+const employee = Number(p.get('employee')) || null
+const page = Math.max(1, Number(p.get('page')) || 1)
+
+const and: Where[] = [
+  { inclusiveDateFrom: { less_than_equal: `${year}-12-31T23:59:59.999Z` } },
+  { inclusiveDateTo: { greater_than_equal: `${year}-01-01T00:00:00.000Z` } },
+]
+if (q) and.push({ or: [{ lastName: { like: q } }, { firstName: { like: q } }, { middleName: { like: q } }, { remarks: { like: q } }] })
+if (status) and.push({ status: { equals: status } })
+if (employee) and.push({ employee: { equals: employee } })
+
+const [leaves, stats, settings, activeCount, employeeDoc] = await Promise.all([
+  payload.find({ collection: 'wellness-leaves', where: { and }, sort: ['-inclusiveDateFrom', '-id'], page, limit: 25, depth: 0, user, overrideAccess: false }),
+  leaveStats(payload, year),
+  payload.findGlobal({ slug: 'leave-settings', user, overrideAccess: false }),
+  payload.count({ collection: 'employees', where: { employmentStatus: { equals: 'Active' } }, overrideAccess: true }),
+  employee ? payload.findByID({ collection: 'employees', id: employee, depth: 0, user, overrideAccess: false, disableErrors: true }) : null,
+])
+const remaining = await remainingAfter(payload, leaves.docs as never)
+const allowance = allowanceForYear(settings, year)
+const daysUsed = stats.byMonth.reduce((s, m) => s + m.days, 0)
+const filings = stats.byMonth.reduce((s, m) => s + m.filings, 0)
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const monthly = (key: 'filings' | 'days') => MONTHS.map((_, i) => stats.byMonth.find((m) => m.month === i + 1)?.[key] ?? 0)
+const isAdmin = user?.role === 'super-admin' || user?.role === 'hr-admin'
+const yearUrl = (y: number) => {
+  const u = new URL(Astro.url)
+  u.searchParams.set('year', String(y))
+  u.searchParams.delete('page')
+  return `${u.pathname}${u.search}`
+}
+const exportQuery = new URLSearchParams({ module: 'wellness-leaves', year: String(year) })
+---
+<App
+  title="Wellness Leave"
+  heading="Wellness leave"
+  description={`${allowance} wellness leave day${allowance === 1 ? '' : 's'} per employee in ${year}. Weekends and holidays are not counted.`}
+>
+  <Fragment slot="actions">
+    {isAdmin && <a class="btn-secondary" href="/leave/settings"><Icon name="settings" /> Allowance & holidays</a>}
+    <a class="btn-secondary" href={`/data/export?${exportQuery}`}><Icon name="download" /> Export {year}</a>
+    <a class="btn-primary" href={`/leave/new${employee ? `?employee=${employee}` : ''}`}><Icon name="plus" /> File leave</a>
+  </Fragment>
+
+  <div class="mb-4 flex items-center gap-2">
+    <a class="btn-secondary btn-sm" href={yearUrl(year - 1)} aria-label="Previous year">←</a>
+    <span class="text-lg font-semibold tabular">{year}</span>
+    <a class="btn-secondary btn-sm" href={yearUrl(year + 1)} aria-label="Next year">→</a>
+    {year !== thisYear && <a class="btn-ghost btn-sm" href={yearUrl(thisYear)}>This year</a>}
+  </div>
+
+  <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <StatTile label="Leave filings" value={filings} note="Approved and pending" />
+    <StatTile label="Days used" value={daysUsed} note={`of ${(allowance * activeCount.totalDocs).toLocaleString()} available to active staff`} />
+    <StatTile label="Employees who filed" value={stats.employeesWithLeave} note={`of ${activeCount.totalDocs} active employees`} />
+    <StatTile label="Disapproved / cancelled" value={stats.byStatus.filter((s) => s.status === 'Disapproved' || s.status === 'Cancelled').reduce((a, b) => a + b.count, 0)} />
+  </div>
+
+  <div class="mt-4 grid items-start gap-4 xl:grid-cols-2">
+    <BarChart
+      title="Leave days per month"
+      subtitle={`Working days taken in ${year}, by month the leave starts`}
+      spec={{ labels: MONTHS, series: [{ label: 'Days taken', data: monthly('days'), slot: 1 }], valueLabels: true, unit: 'days' }}
+      height={240}
+    />
+    <BarChart
+      title="Most leave days used"
+      subtitle={`Top employees in ${year} (allowance: ${allowance} days)`}
+      spec={{
+        labels: stats.topUsers.map((u) => u.name),
+        series: [
+          { label: 'Used', data: stats.topUsers.map((u) => u.days), slot: 1 },
+          { label: 'Remaining', data: stats.topUsers.map((u) => Math.max(0, allowance - u.days)), slot: 3 },
+        ],
+        stacked: true,
+        horizontal: true,
+        unit: 'days',
+      }}
+      emptyText={`No leave filed in ${year}.`}
+    />
+  </div>
+
+  <form method="get" class="card mt-6 flex flex-wrap items-end gap-3 p-4">
+    <input type="hidden" name="year" value={year} />
+    {employee && <input type="hidden" name="employee" value={employee} />}
+    <div class="min-w-56 flex-1">
+      <label class="label" for="q">Search</label>
+      <input class="input" id="q" name="q" type="search" value={q} placeholder="Employee name or remarks" />
+    </div>
+    <div>
+      <label class="label" for="status">Status</label>
+      <select class="input" id="status" name="status">
+        <option value="">All</option>
+        {LEAVE_STATUS_OPTIONS.map((s) => <option selected={s === status}>{s}</option>)}
+      </select>
+    </div>
+    <button class="btn-primary">Filter</button>
+    {(q || status || employee) && <a class="btn-ghost" href={`/leave?year=${year}`}>Clear</a>}
+  </form>
+  {employeeDoc && (
+    <p class="mt-3 text-sm text-fg-2">Showing filings for <a class="font-medium text-primary-ink hover:underline" href={`/employees/${employeeDoc.id}`}>{employeeDoc.fullName}</a>.</p>
+  )}
+
+  <div class="card mt-4 overflow-hidden">
+    {
+      leaves.totalDocs === 0 ? (
+        <EmptyState title={`No leave filings for ${year}`} text="Filed wellness leave will show here.">
+          <a class="btn-primary" href="/leave/new">File leave</a>
+        </EmptyState>
+      ) : (
+        <>
+          <div class="overflow-x-auto">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Last name</th><th>First name</th><th>Middle name</th><th>Date filing</th><th>Inclusive date</th>
+                  <th>Date received</th><th class="text-right">Days</th><th class="text-right">Remaining days</th><th>Status</th><th>Remarks</th>
+                </tr>
+              </thead>
+              <tbody>
+                {leaves.docs.map((l) => (
+                  <tr>
+                    <td class="font-medium"><a class="hover:text-primary-ink" href={`/leave/${l.id}`}>{l.lastName}</a></td>
+                    <td>{l.firstName}</td>
+                    <td class="text-fg-2">{l.middleName}</td>
+                    <td class="whitespace-nowrap tabular">{formatDate(l.dateFiling)}</td>
+                    <td class="whitespace-nowrap tabular">
+                      {formatDate(l.inclusiveDateFrom)}
+                      {l.inclusiveDateTo !== l.inclusiveDateFrom && <> – {formatDate(l.inclusiveDateTo)}</>}
+                    </td>
+                    <td class="whitespace-nowrap tabular text-fg-2">{formatDate(l.dateReceived)}</td>
+                    <td class="text-right tabular">{l.days}</td>
+                    <td class="text-right tabular font-medium">{remaining.get(l.id)}</td>
+                    <td><span class={statusBadge(l.status)}>{l.status}</span></td>
+                    <td class="max-w-56 truncate text-fg-2" title={l.remarks ?? ''}>{l.remarks}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Pagination page={leaves.page ?? 1} totalPages={leaves.totalPages} totalDocs={leaves.totalDocs} limit={25} />
+        </>
+      )
+    }
+  </div>
+  <p class="mt-2 text-xs text-muted">Remaining days = the employee's balance for that year right after the filing, counting filings in date order.</p>
+</App>

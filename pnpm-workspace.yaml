@@ -1,0 +1,11 @@
+packages:
+  - apps/*
+  - packages/*
+
+allowBuilds:
+  esbuild: true
+  unrs-resolver: true
+  sharp: false
+
+# Flat node_modules: Passenger on shared hosting and Next.js file tracing work best without symlinks.
+nodeLinker: hoisted

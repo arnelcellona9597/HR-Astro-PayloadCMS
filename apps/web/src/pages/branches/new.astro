@@ -1,0 +1,18 @@
+---
+import { BRANCHES } from '@hr/shared/modules'
+
+import ModuleForm from '../../components/ModuleForm.astro'
+import App from '../../layouts/App.astro'
+import { handleSave } from '../../lib/crud'
+
+const state = await handleSave(Astro, {
+  collection: 'branches',
+  fields: BRANCHES.fields,
+  successMessage: (d) => `Branch ${d.name} was added.`,
+  redirectTo: (d) => `/branches/${d.id}`,
+})
+if (state.redirect) return state.redirect
+---
+<App title="Add branch" heading="Add branch" back={{ href: '/branches', label: 'Branches' }}>
+  <ModuleForm fields={BRANCHES.fields} values={state.values} errors={state.errors} formError={state.formError} cancelHref="/branches" submitLabel="Add branch" wide={['address']} />
+</App>

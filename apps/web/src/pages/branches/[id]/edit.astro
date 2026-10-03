@@ -1,0 +1,24 @@
+---
+import { BRANCHES } from '@hr/shared/modules'
+
+import ModuleForm from '../../../components/ModuleForm.astro'
+import App from '../../../layouts/App.astro'
+import { docToValues, handleSave } from '../../../lib/crud'
+
+const { payload, user } = Astro.locals
+const id = Number(Astro.params.id)
+const branch = await payload.findByID({ collection: 'branches', id, depth: 0, user, overrideAccess: false, disableErrors: true })
+if (!branch) return new Response(null, { status: 404 })
+const state = await handleSave(Astro, {
+  collection: 'branches',
+  fields: BRANCHES.fields,
+  id,
+  initial: docToValues(branch as never, BRANCHES.fields),
+  successMessage: (d) => `Branch ${d.name} was updated.`,
+  redirectTo: (d) => `/branches/${d.id}`,
+})
+if (state.redirect) return state.redirect
+---
+<App title={`Edit ${branch.name}`} heading={`Edit ${branch.name}`} back={{ href: `/branches/${id}`, label: branch.name }}>
+  <ModuleForm fields={BRANCHES.fields} values={state.values} errors={state.errors} formError={state.formError} cancelHref={`/branches/${id}`} submitLabel="Save changes" wide={['address']} />
+</App>

@@ -1,0 +1,184 @@
+---
+import { complianceStats } from '@hr/cms/server/stats'
+import { formatDate, todayYmd } from '@hr/shared'
+import { COMPLIANCE_ROUTES, IPCR } from '@hr/shared/modules'
+import { IPCR_PERIODS } from '@hr/shared'
+import type { Where } from 'payload'
+
+import EmptyState from '../../../components/EmptyState.astro'
+import Icon from '../../../components/Icon.astro'
+import Pagination from '../../../components/Pagination.astro'
+import StatTile from '../../../components/StatTile.astro'
+import App from '../../../layouts/App.astro'
+import { setFlash } from '../../../lib/flash'
+
+const route = Astro.params.type!
+const mod = COMPLIANCE_ROUTES[route]
+if (!mod) return new Response(null, { status: 404 })
+const slug = mod.slug as 'itr-submissions' | 'sworn-declarations' | 'pds-submissions' | 'ipcr-ratings'
+const isIpcr = mod === IPCR
+
+const { payload, user } = Astro.locals
+const p = Astro.url.searchParams
+const thisYear = Number(todayYmd().slice(0, 4))
+const year = Math.min(2100, Math.max(2000, Number(p.get('year')) || thisYear))
+const view = p.get('view') === 'missing' ? 'missing' : 'records'
+const q = (p.get('q') ?? '').trim().slice(0, 100)
+const page = Math.max(1, Number(p.get('page')) || 1)
+
+// Create blank rows for every active employee who has no record yet this year.
+if (Astro.request.method === 'POST') {
+  const fd = await Astro.request.formData()
+  const period = isIpcr ? String(fd.get('ratingPeriod') ?? '') : null
+  if (isIpcr && !(IPCR_PERIODS as readonly string[]).includes(period!)) {
+    setFlash(Astro.cookies, { type: 'error', message: 'Choose the IPCR rating period first.' })
+    return Astro.redirect(Astro.url.pathname + Astro.url.search)
+  }
+  const active = await payload.find({ collection: 'employees', where: { employmentStatus: { equals: 'Active' } }, pagination: false, depth: 0, overrideAccess: true, select: { employeeId: true } })
+  const existing = await payload.find({
+    collection: slug,
+    where: { and: [{ year: { equals: year } }, ...(isIpcr ? [{ ratingPeriod: { equals: period } }] : [])] },
+    pagination: false,
+    depth: 0,
+    overrideAccess: true,
+    select: { employee: true },
+  })
+  const have = new Set(existing.docs.map((d) => (typeof d.employee === 'object' ? d.employee.id : d.employee)))
+  let created = 0
+  for (const e of active.docs) {
+    if (have.has(e.id)) continue
+    await payload.create({ collection: slug, data: { employee: e.id, year, ...(isIpcr ? { ratingPeriod: period } : {}) } as never, user, overrideAccess: false })
+    created++
+  }
+  setFlash(Astro.cookies, { type: 'success', message: created ? `Added ${created} row${created === 1 ? '' : 's'} for ${year}. Fill in the dates as documents arrive.` : 'Every active employee already has a row.' })
+  return Astro.redirect(`/requirements/${route}?year=${year}`)
+}
+
+const stats = await complianceStats(payload, slug, year)
+const and: Where[] = [{ year: { equals: year } }]
+if (q) and.push({ or: [{ lastName: { like: q } }, { firstName: { like: q } }, { jobTitle: { like: q } }, { station: { like: q } }, { remarks: { like: q } }] })
+
+const records = view === 'records'
+  ? await payload.find({ collection: slug, where: { and }, sort: ['lastName', 'firstName', 'id'], page, limit: 50, depth: 1, user, overrideAccess: false, populate: { employees: { employeeId: true } } })
+  : null
+const missing = view === 'missing'
+  ? await payload.find({
+      collection: 'employees',
+      where: { id: { in: stats.missingIds.length ? stats.missingIds : [0] } },
+      sort: 'fullName',
+      page,
+      limit: 50,
+      depth: 1,
+      overrideAccess: true,
+      select: { employeeId: true, fullName: true, position: true, station: true },
+      populate: { branches: { name: true } },
+    })
+  : null
+
+const columns = mod.fields.filter((f) => f.name !== 'employee' && f.name !== 'year')
+const show = (doc: Record<string, unknown>, name: string, kind: string) => {
+  const v = doc[name]
+  if (v == null || v === '') return ''
+  if (kind === 'date') return formatDate(v)
+  if (name === 'rating' && typeof v === 'number') return v.toFixed(3)
+  return String(v)
+}
+const tab = (v: string) => `/requirements/${route}?year=${year}${v === 'missing' ? '&view=missing' : ''}`
+const exportQuery = new URLSearchParams({ module: slug, year: String(year) })
+---
+<App title={mod.title} heading={mod.title} description={`Records for ${year}. Compliance counts active employees with a Date Submitted.`} back={{ href: `/requirements?year=${year}`, label: 'Annual requirements' }}>
+  <Fragment slot="actions">
+    <a class="btn-secondary" href={`/data/export?${exportQuery}`}><Icon name="download" /> Export {year}</a>
+    <a class="btn-primary" href={`/requirements/${route}/new?year=${year}`}><Icon name="plus" /> Add record</a>
+  </Fragment>
+
+  <div class="mb-4 flex items-center gap-2">
+    <a class="btn-secondary btn-sm" href={`/requirements/${route}?year=${year - 1}`} aria-label="Previous year">←</a>
+    <span class="text-lg font-semibold tabular">{year}</span>
+    <a class="btn-secondary btn-sm" href={`/requirements/${route}?year=${year + 1}`} aria-label="Next year">→</a>
+  </div>
+
+  <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+    <StatTile label="Active employees" value={stats.active} />
+    <StatTile label="Complied" value={stats.complied} tone="success" note={stats.active ? `${Math.round((stats.complied / stats.active) * 100)}%` : undefined} />
+    <StatTile label="Missing" value={stats.missing} tone={stats.missing ? 'warning' : 'success'} href={tab('missing')} />
+  </div>
+
+  <div class="mt-6 flex flex-wrap items-center justify-between gap-3">
+    <div class="flex rounded-lg border border-line bg-surface p-0.5 text-sm">
+      <a href={tab('records')} class:list={['rounded-md px-3 py-1.5', view === 'records' ? 'bg-primary-soft font-medium text-primary-ink' : 'text-fg-2']}>Records</a>
+      <a href={tab('missing')} class:list={['rounded-md px-3 py-1.5', view === 'missing' ? 'bg-primary-soft font-medium text-primary-ink' : 'text-fg-2']}>Not yet complied ({stats.missing})</a>
+    </div>
+    <form method="post" class="flex items-center gap-2" data-confirm={`Add a blank ${year} row for every active employee who has none?`}>
+      {isIpcr && (
+        <select class="input w-auto" name="ratingPeriod" aria-label="Rating period" required>
+          {IPCR_PERIODS.map((p) => <option>{p}</option>)}
+        </select>
+      )}
+      <button class="btn-secondary">Generate rows for all active employees</button>
+    </form>
+  </div>
+
+  {view === 'records' && (
+    <form method="get" class="mt-4 flex gap-2">
+      <input type="hidden" name="year" value={year} />
+      <input class="input max-w-md" type="search" name="q" value={q} placeholder="Search name, job title, station, remarks" aria-label="Search" />
+      <button class="btn-secondary">Search</button>
+    </form>
+  )}
+
+  <div class="card mt-4 overflow-hidden">
+    {view === 'records' && records && (
+      records.totalDocs === 0 ? (
+        <EmptyState title={`No ${mod.title} records for ${year}`} text="Add records one by one, generate rows for all active employees, or import from Excel." />
+      ) : (
+        <>
+          <div class="overflow-x-auto">
+            <table class="table">
+              <thead><tr><th>Employee ID</th>{columns.map((c) => <th class:list={[c.kind === 'number' && 'text-right']}>{c.label}</th>)}</tr></thead>
+              <tbody>
+                {records.docs.map((r) => (
+                  <tr>
+                    <td class="whitespace-nowrap font-mono text-xs"><a class="hover:text-primary-ink" href={`/requirements/${route}/${r.id}`}>{typeof r.employee === 'object' ? r.employee.employeeId : ''}</a></td>
+                    {columns.map((c) => (
+                      <td class:list={[c.kind === 'date' && 'whitespace-nowrap tabular', c.kind === 'number' && 'text-right tabular', c.kind === 'textarea' && 'max-w-56 truncate text-fg-2', c.name === 'lastName' && 'font-medium']}>
+                        {c.name === 'lastName' ? <a class="hover:text-primary-ink" href={`/requirements/${route}/${r.id}`}>{show(r as never, c.name, c.kind)}</a> : show(r as never, c.name, c.kind)}
+                        {c.name === 'dateSubmitted' && !r.dateSubmitted && <span class="badge-warning">Pending</span>}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Pagination page={records.page ?? 1} totalPages={records.totalPages} totalDocs={records.totalDocs} limit={50} />
+        </>
+      )
+    )}
+    {view === 'missing' && missing && (
+      missing.totalDocs === 0 || stats.missing === 0 ? (
+        <EmptyState title="Everyone has complied" text={`All active employees have a ${year} record with a Date Submitted.`} />
+      ) : (
+        <>
+          <div class="overflow-x-auto">
+            <table class="table">
+              <thead><tr><th>Employee ID</th><th>Name</th><th>Position</th><th>Station</th><th></th></tr></thead>
+              <tbody>
+                {missing.docs.map((e) => (
+                  <tr>
+                    <td class="font-mono text-xs">{e.employeeId}</td>
+                    <td><a class="font-medium hover:text-primary-ink" href={`/employees/${e.id}`}>{e.fullName}</a></td>
+                    <td>{e.position}</td>
+                    <td class="text-fg-2">{typeof e.station === 'object' && e.station ? e.station.name : ''}</td>
+                    <td class="text-right"><a class="btn-secondary btn-sm" href={`/requirements/${route}/new?year=${year}&employee=${e.id}`}>Record</a></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Pagination page={missing.page ?? 1} totalPages={missing.totalPages} totalDocs={missing.totalDocs} limit={50} />
+        </>
+      )
+    )}
+  </div>
+</App>

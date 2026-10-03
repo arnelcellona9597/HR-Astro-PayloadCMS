@@ -1,0 +1,44 @@
+---
+import { WELLNESS_LEAVES } from '@hr/shared/modules'
+
+import Icon from '../../components/Icon.astro'
+import LeavePreview from '../../components/leave/LeavePreview.astro'
+import ModuleForm from '../../components/ModuleForm.astro'
+import App from '../../layouts/App.astro'
+import { employeeChoices } from '../../lib/choices'
+import { docToValues, handleDelete, handleSave } from '../../lib/crud'
+
+const { payload, user } = Astro.locals
+const id = Number(Astro.params.id)
+const leave = await payload.findByID({ collection: 'wellness-leaves', id, depth: 0, user, overrideAccess: false, disableErrors: true })
+if (!leave) return new Response(null, { status: 404 })
+if (Astro.request.method === 'POST' && Astro.url.searchParams.get('action') === 'delete') {
+  return handleDelete(Astro, 'wellness-leaves', id, 'The leave filing', '/leave', `/leave/${id}`)
+}
+const state = await handleSave(Astro, {
+  collection: 'wellness-leaves',
+  fields: WELLNESS_LEAVES.fields,
+  id,
+  initial: docToValues(leave as never, WELLNESS_LEAVES.fields),
+  successMessage: () => 'The leave filing was updated.',
+  redirectTo: () => '/leave',
+})
+if (state.redirect) return state.redirect
+const employees = await employeeChoices(payload, true)
+const fields = WELLNESS_LEAVES.fields.map((f) => (f.name === 'employee' ? { ...f, label: 'Employee' } : f))
+const isAdmin = user?.role === 'super-admin' || user?.role === 'hr-admin'
+---
+<App title="Edit leave" heading={`Leave of ${leave.firstName} ${leave.lastName}`} back={{ href: '/leave', label: 'Wellness leave' }}>
+  <Fragment slot="actions">
+    {isAdmin && (
+      <form method="post" action={`/leave/${id}?action=delete`} data-confirm="Delete this leave filing? The days return to the employee's balance.">
+        <button class="btn-danger"><Icon name="trash" /> Delete</button>
+      </form>
+    )}
+  </Fragment>
+  <div class="max-w-4xl">
+    <ModuleForm fields={fields} values={state.values} errors={state.errors} formError={state.formError} choices={{ employee: employees }} cancelHref="/leave" submitLabel="Save changes">
+      <LeavePreview excludeId={id} />
+    </ModuleForm>
+  </div>
+</App>

@@ -1,0 +1,61 @@
+---
+import { ROLE_LABELS } from '@hr/shared/enums'
+
+import App from '../layouts/App.astro'
+import { setAuthCookie } from '../lib/auth'
+import { toFormErrors } from '../lib/errors'
+import { setFlash } from '../lib/flash'
+
+const { payload, user } = Astro.locals
+let error = ''
+if (Astro.request.method === 'POST' && user) {
+  const fd = await Astro.request.formData()
+  const action = String(fd.get('action'))
+  try {
+    if (action === 'name') {
+      await payload.update({ collection: 'users', id: user.id, data: { name: String(fd.get('name') ?? '').trim() }, user, overrideAccess: false })
+      setFlash(Astro.cookies, { type: 'success', message: 'Name updated.' })
+      return Astro.redirect('/profile')
+    }
+    if (action === 'password') {
+      const current = String(fd.get('current') ?? '')
+      const next = String(fd.get('password') ?? '')
+      if (next !== String(fd.get('confirm') ?? '')) throw new Error('New passwords do not match.')
+      // Confirm the current password before changing it.
+      await payload.login({ collection: 'users', data: { email: user.email, password: current } }).catch(() => {
+        throw new Error('Your current password is incorrect.')
+      })
+      await payload.update({ collection: 'users', id: user.id, data: { password: next } as never, user, overrideAccess: false })
+      const res = await payload.login({ collection: 'users', data: { email: user.email, password: next } })
+      if (res.token) setAuthCookie(Astro.cookies, res.token, res.exp)
+      setFlash(Astro.cookies, { type: 'success', message: 'Password changed.' })
+      return Astro.redirect('/profile')
+    }
+  } catch (err) {
+    const fe = toFormErrors(err)
+    error = (err as Error).message && !(err as { status?: number }).status ? (err as Error).message : (Object.values(fe.fields)[0] ?? fe.form ?? 'Could not save.')
+    Astro.response.status = 400
+  }
+}
+---
+<App title="My account" heading="My account">
+  {error && <div class="mb-4 rounded-lg bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{error}</div>}
+  <div class="grid max-w-4xl gap-6 md:grid-cols-2">
+    <form method="post" class="card space-y-4 p-5">
+      <h2 class="font-semibold">Profile</h2>
+      <input type="hidden" name="action" value="name" />
+      <div><label class="label" for="name">Full name</label><input class="input" id="name" name="name" required value={user?.name} /></div>
+      <div><span class="label">Email</span><p class="text-sm">{user?.email}</p></div>
+      <div><span class="label">Role</span><p class="text-sm">{user ? ROLE_LABELS[user.role] : ''}</p></div>
+      <button class="btn-primary">Save</button>
+    </form>
+    <form method="post" class="card space-y-4 p-5">
+      <h2 class="font-semibold">Change password</h2>
+      <input type="hidden" name="action" value="password" />
+      <div><label class="label" for="current">Current password</label><input class="input" id="current" name="current" type="password" autocomplete="current-password" required /></div>
+      <div><label class="label" for="password">New password</label><input class="input" id="password" name="password" type="password" autocomplete="new-password" minlength="10" required /><p class="field-help">At least 10 characters, with letters and numbers.</p></div>
+      <div><label class="label" for="confirm">Confirm new password</label><input class="input" id="confirm" name="confirm" type="password" autocomplete="new-password" required /></div>
+      <button class="btn-primary">Change password</button>
+    </form>
+  </div>
+</App>

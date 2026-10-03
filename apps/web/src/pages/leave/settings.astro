@@ -1,0 +1,133 @@
+---
+import { formatDate, isValidYmd, todayYmd } from '@hr/shared'
+
+import Icon from '../../components/Icon.astro'
+import App from '../../layouts/App.astro'
+import { toFormErrors } from '../../lib/errors'
+import { setFlash } from '../../lib/flash'
+
+const { payload, user } = Astro.locals
+const isAdmin = user?.role === 'super-admin' || user?.role === 'hr-admin'
+const thisYear = Number(todayYmd().slice(0, 4))
+const year = Number(Astro.url.searchParams.get('year')) || thisYear
+let error = ''
+
+if (Astro.request.method === 'POST') {
+  const fd = await Astro.request.formData()
+  const action = String(fd.get('action'))
+  try {
+    if (action === 'allowance') {
+      const annualAllowance = Number(fd.get('annualAllowance'))
+      const years = fd.getAll('overrideYear').map(Number)
+      const days = fd.getAll('overrideDays').map(String)
+      const yearOverrides = years
+        .map((y, i) => ({ year: y, allowance: days[i] === '' ? NaN : Number(days[i]) }))
+        .filter((o) => o.year && !Number.isNaN(o.allowance))
+      if (!Number.isInteger(annualAllowance) || annualAllowance < 0) throw new Error('Allowance must be a whole number of days.')
+      await payload.updateGlobal({ slug: 'leave-settings', data: { annualAllowance, yearOverrides }, user, overrideAccess: false })
+      setFlash(Astro.cookies, { type: 'success', message: 'Wellness leave allowance saved.' })
+    } else if (action === 'addHoliday') {
+      const date = String(fd.get('date') ?? '')
+      if (!isValidYmd(date)) throw new Error('Pick a valid holiday date.')
+      await payload.create({
+        collection: 'holidays',
+        data: { date, name: String(fd.get('name') ?? '').trim(), type: String(fd.get('type') ?? 'Regular Holiday') as never },
+        user,
+        overrideAccess: false,
+      })
+      setFlash(Astro.cookies, { type: 'success', message: 'Holiday added. It applies to leave filed from now on.' })
+    } else if (action === 'deleteHoliday') {
+      await payload.delete({ collection: 'holidays', id: Number(fd.get('id')), user, overrideAccess: false })
+      setFlash(Astro.cookies, { type: 'success', message: 'Holiday removed.' })
+    }
+    return Astro.redirect(`/leave/settings?year=${year}`)
+  } catch (err) {
+    const fe = toFormErrors(err)
+    error = Object.values(fe.fields)[0] ?? fe.form ?? (err as Error).message
+    if (/unique|already/i.test(error)) error = 'That date is already in the holiday list.'
+    Astro.response.status = 400
+  }
+}
+
+const [settings, holidays] = await Promise.all([
+  payload.findGlobal({ slug: 'leave-settings', user, overrideAccess: false }),
+  payload.find({
+    collection: 'holidays',
+    where: { and: [{ date: { greater_than_equal: `${year}-01-01T00:00:00.000Z` } }, { date: { less_than_equal: `${year}-12-31T23:59:59.999Z` } }] },
+    sort: 'date',
+    limit: 200,
+    depth: 0,
+    user,
+    overrideAccess: false,
+  }),
+])
+const overrides = [...(settings.yearOverrides ?? []), { year: null, allowance: null }]
+---
+<App title="Leave settings" heading="Wellness leave settings" back={{ href: '/leave', label: 'Wellness leave' }}>
+  {error && <div class="mb-4 rounded-lg bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{error}</div>}
+  <div class="grid gap-6 xl:grid-cols-2">
+    <section class="card p-5">
+      <h2 class="font-semibold">Yearly allowance</h2>
+      <p class="mt-1 text-sm text-muted">Each employee gets this many wellness leave days per calendar year.</p>
+      <form method="post" class="mt-4 space-y-4">
+        <input type="hidden" name="action" value="allowance" />
+        <div class="max-w-48">
+          <label class="label" for="annualAllowance">Days per year (default)</label>
+          <input class="input" id="annualAllowance" name="annualAllowance" type="number" min="0" max="60" required value={settings.annualAllowance ?? 5} disabled={!isAdmin} />
+        </div>
+        <fieldset>
+          <legend class="label">Overrides for specific years (optional)</legend>
+          <p class="field-help mb-2">Use this when one year has a different allowance. Past years keep their own value when you change the default.</p>
+          <div class="space-y-2">
+            {overrides.map((o) => (
+              <div class="flex items-center gap-2">
+                <input class="input max-w-28" name="overrideYear" type="number" min="2000" max="2100" placeholder="Year" value={o.year ?? ''} aria-label="Year" disabled={!isAdmin} />
+                <input class="input max-w-28" name="overrideDays" type="number" min="0" max="60" placeholder="Days" value={o.allowance ?? ''} aria-label="Days" disabled={!isAdmin} />
+                <span class="text-xs text-muted">{o.year ? 'Clear both boxes to remove' : 'Add a year'}</span>
+              </div>
+            ))}
+          </div>
+        </fieldset>
+        {isAdmin ? <button class="btn-primary">Save allowance</button> : <p class="text-sm text-muted">Only HR Admins can change the allowance.</p>}
+      </form>
+    </section>
+
+    <section class="card p-5">
+      <div class="flex items-center justify-between">
+        <h2 class="font-semibold">Holidays {year}</h2>
+        <div class="flex gap-1">
+          <a class="btn-secondary btn-sm" href={`/leave/settings?year=${year - 1}`}>←</a>
+          <a class="btn-secondary btn-sm" href={`/leave/settings?year=${year + 1}`}>→</a>
+        </div>
+      </div>
+      <p class="mt-1 text-sm text-muted">Non-working days that are skipped when counting leave. Check them against the official proclamation each year.</p>
+      <form method="post" class="mt-4 flex flex-wrap items-end gap-2">
+        <input type="hidden" name="action" value="addHoliday" />
+        <div><label class="label" for="h-date">Date</label><input class="input" id="h-date" name="date" type="date" required /></div>
+        <div class="min-w-40 flex-1"><label class="label" for="h-name">Name</label><input class="input" id="h-name" name="name" required /></div>
+        <div>
+          <label class="label" for="h-type">Type</label>
+          <select class="input" id="h-type" name="type">
+            {['Regular Holiday', 'Special Non-Working Day', 'Local Holiday', 'Office Closure'].map((t) => <option>{t}</option>)}
+          </select>
+        </div>
+        <button class="btn-primary"><Icon name="plus" /> Add</button>
+      </form>
+      <ul class="mt-4 divide-y divide-[var(--border)]">
+        {holidays.docs.length === 0 && <li class="py-3 text-sm text-muted">No holidays recorded for {year}.</li>}
+        {holidays.docs.map((h) => (
+          <li class="flex items-center justify-between gap-3 py-2 text-sm">
+            <span><span class="tabular font-medium">{formatDate(h.date)}</span> · {h.name} <span class="text-xs text-muted">({h.type})</span></span>
+            {isAdmin && (
+              <form method="post" data-confirm={`Remove ${h.name}?`}>
+                <input type="hidden" name="action" value="deleteHoliday" />
+                <input type="hidden" name="id" value={h.id} />
+                <button class="btn-ghost btn-sm" aria-label={`Remove ${h.name}`}><Icon name="x" /></button>
+              </form>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  </div>
+</App>

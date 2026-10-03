@@ -1,0 +1,78 @@
+---
+import { EMPLOYEES } from '@hr/shared/modules'
+
+import ModuleForm from '../../components/ModuleForm.astro'
+import App from '../../layouts/App.astro'
+import { branchChoices, positionSuggestions } from '../../lib/choices'
+import { handleSave } from '../../lib/crud'
+import { checkImage, saveUpload } from '../../lib/upload'
+
+const { payload, user } = Astro.locals
+
+// "Convert to employee" from the onboarding tracker pre-fills what the application already knows.
+const fromApp = Number(Astro.url.searchParams.get('fromApplication')) || null
+const application = fromApp
+  ? await payload.findByID({ collection: 'applications', id: fromApp, depth: 0, user, overrideAccess: false, disableErrors: true })
+  : null
+const initial: Record<string, string> = { employmentStatus: 'Active' }
+if (application) {
+  const parts = application.applicantName.trim().split(/\s+/)
+  initial.lastName = parts.length > 1 ? parts.pop()! : ''
+  initial.firstName = parts.join(' ')
+  initial.position = application.positionApplied
+  if (application.station) initial.station = String(application.station)
+  initial.dateHired = (application.startOjt ?? '').slice(0, 10)
+}
+
+const state = await handleSave(Astro, {
+  collection: 'employees',
+  fields: EMPLOYEES.fields,
+  initial,
+  afterSave: async (doc) => {
+    if (application) {
+      await payload.update({
+        collection: 'applications',
+        id: application.id,
+        data: { employee: doc.id as number, applicationStatus: 'Hired' },
+        user,
+        overrideAccess: false,
+      })
+    }
+  },
+  prepare: async (data, fd) => {
+    const photo = fd.get('photo') as File | null
+    const err = checkImage(photo)
+    if (err) return { photo: err }
+    if (photo && photo.size) data.profilePicture = await saveUpload(payload, user, photo, `Photo of ${data.firstName} ${data.lastName}`)
+  },
+  successMessage: (d) => `Employee ${d.fullName} was added.`,
+  redirectTo: (d) => `/employees/${d.id}`,
+})
+if (state.redirect) return state.redirect
+const [branches, positions] = await Promise.all([branchChoices(payload), positionSuggestions(payload)])
+---
+<App
+  title="Add employee"
+  heading={application ? `Add ${application.applicantName} as an employee` : 'Add employee'}
+  description={application ? `From application ${application.applicationId}. Check the split of first and last name before saving.` : undefined}
+  back={application ? { href: `/onboarding/${application.id}`, label: 'Back to application' } : { href: '/employees', label: 'Employees' }}
+>
+  <ModuleForm
+    fields={EMPLOYEES.fields}
+    values={state.values}
+    errors={state.errors}
+    formError={state.formError}
+    choices={{ station: branches }}
+    suggestions={{ position: positions }}
+    submitLabel="Add employee"
+    cancelHref="/employees"
+    enctype="multipart/form-data"
+    wide={['address', 'emergencyAddress', 'professionalEligibility']}
+  >
+    <fieldset class="card p-5" slot="before">
+      <legend class="px-1 text-sm font-semibold">Profile picture</legend>
+      <input class="input" type="file" name="photo" accept="image/png,image/jpeg,image/webp,image/gif" aria-describedby="photo-help" />
+      {state.errors.photo ? <p class="field-error">{state.errors.photo}</p> : <p class="field-help" id="photo-help">Optional. PNG, JPG, WEBP or GIF up to 5 MB.</p>}
+    </fieldset>
+  </ModuleForm>
+</App>

@@ -1,0 +1,195 @@
+@import 'tailwindcss';
+
+/* Dark mode follows the data-theme attribute on <html> (set before first paint, see Base.astro). */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/*
+ * Brand colors (--brand-*) are injected per request from Settings → Branding.
+ * Everything else derives from them, so changing the palette re-themes the whole app.
+ */
+:root {
+  color-scheme: light;
+  --brand-primary: #1d4ed8;
+  --brand-secondary: #475569;
+  --brand-accent: #0d9488;
+  --brand-success: #15803d;
+  --brand-warning: #b45309;
+  --brand-danger: #b91c1c;
+  --brand-on-primary: #ffffff;
+
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #f0f2f5;
+  --border: #e2e5ea;
+  --fg: #111418;
+  --fg-2: #4b5260;
+  --muted: #6b7280;
+
+  --primary: var(--brand-primary);
+  --primary-ink: var(--brand-primary);
+  --primary-soft: color-mix(in oklab, var(--brand-primary) 10%, var(--surface));
+  --secondary: var(--brand-secondary);
+  --accent: var(--brand-accent);
+  --success: var(--brand-success);
+  --success-soft: color-mix(in oklab, var(--brand-success) 12%, var(--surface));
+  --warning: var(--brand-warning);
+  --warning-soft: color-mix(in oklab, var(--brand-warning) 14%, var(--surface));
+  --danger: var(--brand-danger);
+  --danger-soft: color-mix(in oklab, var(--brand-danger) 10%, var(--surface));
+
+  /* Chart tokens: validated categorical palette (independent of brand so it stays colorblind-safe) */
+  --chart-surface: var(--surface);
+  --chart-grid: #e8e9ec;
+  --chart-axis: #c3c2b7;
+  --chart-ink: #4b5260;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0f1115;
+  --surface: #181a1f;
+  --surface-2: #20232a;
+  --border: #2c3038;
+  --fg: #f3f4f6;
+  --fg-2: #c3c7cf;
+  --muted: #9aa0aa;
+
+  /* Brand colors used as text/lines are lightened for the dark surface; fills keep the brand hue. */
+  --primary-ink: color-mix(in oklab, var(--brand-primary) 55%, white);
+  --primary-soft: color-mix(in oklab, var(--brand-primary) 22%, var(--surface));
+  --success: color-mix(in oklab, var(--brand-success) 60%, white);
+  --success-soft: color-mix(in oklab, var(--brand-success) 22%, var(--surface));
+  --warning: color-mix(in oklab, var(--brand-warning) 55%, white);
+  --warning-soft: color-mix(in oklab, var(--brand-warning) 22%, var(--surface));
+  --danger: color-mix(in oklab, var(--brand-danger) 55%, white);
+  --danger-soft: color-mix(in oklab, var(--brand-danger) 22%, var(--surface));
+
+  --chart-grid: #2a2d33;
+  --chart-axis: #3a3e46;
+  --chart-ink: #c3c7cf;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--border);
+  --color-fg: var(--fg);
+  --color-fg-2: var(--fg-2);
+  --color-muted: var(--muted);
+  --color-primary: var(--primary);
+  --color-primary-ink: var(--primary-ink);
+  --color-on-primary: var(--brand-on-primary);
+  --color-primary-soft: var(--primary-soft);
+  --color-secondary: var(--secondary);
+  --color-accent: var(--accent);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+@layer base {
+  html {
+    background: var(--bg);
+    color: var(--fg);
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+  }
+  :focus-visible {
+    outline: 2px solid var(--primary-ink);
+    outline-offset: 2px;
+  }
+  [hidden] {
+    display: none !important;
+  }
+}
+
+/* Reusable building blocks (declared as utilities so other classes can @apply them). */
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+}
+@utility badge {
+  @apply inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium;
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-line bg-surface;
+  }
+  .btn-primary {
+    @apply btn bg-primary text-on-primary hover:opacity-90;
+  }
+  .btn-secondary {
+    @apply btn border border-line bg-surface text-fg hover:bg-surface-2;
+  }
+  .btn-danger {
+    @apply btn bg-danger-soft text-danger hover:opacity-90;
+  }
+  .btn-ghost {
+    @apply btn text-fg-2 hover:bg-surface-2 hover:text-fg;
+  }
+  .btn-sm {
+    @apply px-2.5 py-1.5 text-xs;
+  }
+  .label {
+    @apply mb-1 block text-sm font-medium text-fg-2;
+  }
+  .input {
+    @apply block w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg placeholder:text-muted focus:border-primary-ink focus:outline-none focus:ring-2 focus:ring-primary-soft disabled:opacity-60;
+  }
+  .input[aria-invalid='true'] {
+    @apply border-danger;
+  }
+  .field-error {
+    @apply mt-1 text-xs text-danger;
+  }
+  .field-help {
+    @apply mt-1 text-xs text-muted;
+  }
+  .table {
+    @apply w-full text-left text-sm;
+  }
+  .table th {
+    @apply whitespace-nowrap border-b border-line bg-surface-2 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted;
+  }
+  .table td {
+    @apply border-b border-line px-3 py-2 align-top;
+  }
+  .table tbody tr:hover {
+    @apply bg-surface-2;
+  }
+  .badge-neutral {
+    @apply badge bg-surface-2 text-fg-2;
+  }
+  .badge-primary {
+    @apply badge bg-primary-soft text-primary-ink;
+  }
+  .badge-success {
+    @apply badge bg-success-soft text-success;
+  }
+  .badge-warning {
+    @apply badge bg-warning-soft text-warning;
+  }
+  .badge-danger {
+    @apply badge bg-danger-soft text-danger;
+  }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}

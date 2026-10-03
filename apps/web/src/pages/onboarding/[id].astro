@@ -1,0 +1,57 @@
+---
+import { APPLICATIONS } from '@hr/shared/modules'
+
+import Icon from '../../components/Icon.astro'
+import ModuleForm from '../../components/ModuleForm.astro'
+import App from '../../layouts/App.astro'
+import { branchChoices } from '../../lib/choices'
+import { docToValues, handleDelete, handleSave } from '../../lib/crud'
+import { relId, statusBadge } from '../../lib/format'
+
+const { payload, user } = Astro.locals
+const id = Number(Astro.params.id)
+const app = await payload.findByID({ collection: 'applications', id, depth: 0, user, overrideAccess: false, disableErrors: true })
+if (!app) return new Response(null, { status: 404 })
+
+if (Astro.request.method === 'POST' && Astro.url.searchParams.get('action') === 'delete') {
+  return handleDelete(Astro, 'applications', id, `Application ${app.applicationId}`, '/onboarding', `/onboarding/${id}`)
+}
+const state = await handleSave(Astro, {
+  collection: 'applications',
+  fields: APPLICATIONS.fields,
+  id,
+  initial: docToValues(app as never, APPLICATIONS.fields),
+  successMessage: (d) => `Application ${d.applicationId} was updated.`,
+  redirectTo: (d) => `/onboarding/${d.id}`,
+})
+if (state.redirect) return state.redirect
+const branches = await branchChoices(payload)
+const employeeId = relId(app.employee)
+const isAdmin = user?.role === 'super-admin' || user?.role === 'hr-admin'
+---
+<App title={app.applicantName} heading={app.applicantName} description={`${app.applicationId} · ${app.positionApplied}`} back={{ href: '/onboarding', label: 'Onboarding tracker' }}>
+  <Fragment slot="actions">
+    <span class={statusBadge(app.requirementsStatus)}>{app.requirementsStatus === 'Complete' ? 'Requirements complete' : `${app.requirementsMissing} requirement(s) missing`}</span>
+    {
+      employeeId ? (
+        <a class="btn-secondary" href={`/employees/${employeeId}`}><Icon name="user" /> Open employee record</a>
+      ) : (
+        <a class="btn-primary" href={`/employees/new?fromApplication=${id}`}><Icon name="user" /> Convert to employee</a>
+      )
+    }
+    {isAdmin && (
+      <form method="post" action={`/onboarding/${id}?action=delete`} data-confirm={`Delete application ${app.applicationId}?`}>
+        <button class="btn-danger"><Icon name="trash" /> Delete</button>
+      </form>
+    )}
+  </Fragment>
+  <ModuleForm
+    fields={APPLICATIONS.fields}
+    values={state.values}
+    errors={state.errors}
+    formError={state.formError}
+    choices={{ station: branches }}
+    cancelHref="/onboarding"
+    submitLabel="Save changes"
+  />
+</App>

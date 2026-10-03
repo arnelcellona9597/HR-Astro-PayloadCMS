@@ -185,7 +185,7 @@ const COMPLIANCE_TABLES: Record<string, string> = {
  * Compliance for one requirement and year among currently Active employees.
  * "Complied" = a record exists with a Date Submitted.
  */
-export async function complianceStats(payload: Payload, slug: string, year: number) {
+export async function complianceStats(payload: Payload, slug: string, year: number, f: EmployeeFilter = {}) {
   const table = COMPLIANCE_TABLES[slug]
   if (!table) throw new Error(`Unknown requirement ${slug}`)
   const t = sql.raw(`"${table}"`)
@@ -195,7 +195,7 @@ export async function complianceStats(payload: Payload, slug: string, year: numb
           MAX(CASE WHEN r.date_submitted IS NOT NULL THEN 1 ELSE 0 END) AS complied,
           MAX(CASE WHEN r.id IS NOT NULL THEN 1 ELSE 0 END) AS recorded
         FROM employees e LEFT JOIN ${t} r ON r.employee_id = e.id AND r.year = ${year}
-        WHERE e.employment_status = 'Active' GROUP BY e.id`,
+        WHERE e.employment_status = 'Active' AND ${where(f, 'e', false)} GROUP BY e.id`,
   )
   const active = rows.length
   const complied = rows.filter((r) => num(r.complied) === 1).length
@@ -212,4 +212,73 @@ export async function payrollTotals(payload: Payload): Promise<Map<number, { cou
         FROM payslips GROUP BY period_id`,
   )
   return new Map(rows.map((r) => [Number(r.periodId), { count: num(r.count), gross: num(r.gross), net: num(r.net), corrected: num(r.corrected) }]))
+}
+
+export type DashboardRange = { from: string; to: string; prevFrom: string; prevTo: string; sparkFrom: string }
+
+/**
+ * Period numbers for the dashboard (all `YYYY-MM-DD`, inclusive): hires and separations per day in
+ * the range plus totals for the previous range, monthly counts for sparklines, wellness leave filed
+ * in the range (by start date) and the onboarding pipeline. Honors the branch/classification filter.
+ */
+export async function dashboardStats(payload: Payload, f: EmployeeFilter, r: DashboardRange) {
+  const w = where(f, 'e', false)
+  const hiredOn = sql`substr(e.date_hired, 1, 10)`
+  const leftOn = sql`substr(e.last_day_of_service, 1, 10)`
+  const separated = sql`e.employment_status <> 'Active' AND e.last_day_of_service IS NOT NULL`
+  const leaveFilter = sql`w.status IN ('Approved', 'Pending') AND ${w}`
+  const appWhere = f.branchId ? sql`a.station_id = ${f.branchId}` : sql`1 = 1`
+  const [hires, seps, prev, sparkHires, sparkSeps, leave, leavePrev, pending, pipeline, incomplete] = await Promise.all([
+    all<{ d: string; c: number }>(payload, sql`SELECT ${hiredOn} AS d, COUNT(*) AS c FROM employees e WHERE ${w} AND ${hiredOn} BETWEEN ${r.from} AND ${r.to} GROUP BY 1`),
+    all<{ d: string; c: number }>(
+      payload,
+      sql`SELECT ${leftOn} AS d, COUNT(*) AS c FROM employees e WHERE ${w} AND ${separated} AND ${leftOn} BETWEEN ${r.from} AND ${r.to} GROUP BY 1`,
+    ),
+    all<{ hires: number; seps: number }>(
+      payload,
+      sql`SELECT SUM(CASE WHEN ${hiredOn} BETWEEN ${r.prevFrom} AND ${r.prevTo} THEN 1 ELSE 0 END) AS hires,
+            SUM(CASE WHEN ${separated} AND ${leftOn} BETWEEN ${r.prevFrom} AND ${r.prevTo} THEN 1 ELSE 0 END) AS seps
+          FROM employees e WHERE ${w}`,
+    ),
+    all<{ m: string; c: number }>(
+      payload,
+      sql`SELECT substr(e.date_hired, 1, 7) AS m, COUNT(*) AS c FROM employees e WHERE ${w} AND ${hiredOn} BETWEEN ${r.sparkFrom} AND ${r.to} GROUP BY 1`,
+    ),
+    all<{ m: string; c: number }>(
+      payload,
+      sql`SELECT substr(e.last_day_of_service, 1, 7) AS m, COUNT(*) AS c FROM employees e
+          WHERE ${w} AND ${separated} AND ${leftOn} BETWEEN ${r.sparkFrom} AND ${r.to} GROUP BY 1`,
+    ),
+    all<{ filings: number; days: number }>(
+      payload,
+      sql`SELECT COUNT(*) AS filings, COALESCE(SUM(w.days), 0) AS days FROM wellness_leaves w JOIN employees e ON e.id = w.employee_id
+          WHERE ${leaveFilter} AND substr(w.inclusive_date_from, 1, 10) BETWEEN ${r.from} AND ${r.to}`,
+    ),
+    all<{ days: number }>(
+      payload,
+      sql`SELECT COALESCE(SUM(w.days), 0) AS days FROM wellness_leaves w JOIN employees e ON e.id = w.employee_id
+          WHERE ${leaveFilter} AND substr(w.inclusive_date_from, 1, 10) BETWEEN ${r.prevFrom} AND ${r.prevTo}`,
+    ),
+    all<{ c: number }>(
+      payload,
+      sql`SELECT COUNT(*) AS c FROM wellness_leaves w JOIN employees e ON e.id = w.employee_id WHERE w.status = 'Pending' AND ${w}`,
+    ),
+    all<{ status: string; c: number }>(payload, sql`SELECT a.application_status AS status, COUNT(*) AS c FROM applications a WHERE ${appWhere} GROUP BY 1`),
+    all<{ c: number }>(
+      payload,
+      sql`SELECT COUNT(*) AS c FROM applications a WHERE ${appWhere} AND a.requirements_status = 'Incomplete'
+          AND a.application_status NOT IN ('Not Hired', 'Withdrawn')`,
+    ),
+  ])
+  return {
+    hiresByDay: hires.map((x) => ({ date: x.d, count: num(x.c) })),
+    separationsByDay: seps.map((x) => ({ date: x.d, count: num(x.c) })),
+    prevHires: num(prev[0]?.hires),
+    prevSeparations: num(prev[0]?.seps),
+    hiresByMonth: new Map(sparkHires.map((x) => [x.m, num(x.c)])),
+    separationsByMonth: new Map(sparkSeps.map((x) => [x.m, num(x.c)])),
+    leave: { filings: num(leave[0]?.filings), days: num(leave[0]?.days), prevDays: num(leavePrev[0]?.days), pending: num(pending[0]?.c) },
+    pipeline: pipeline.map((x) => ({ status: x.status, count: num(x.c) })),
+    incompleteRequirements: num(incomplete[0]?.c),
+  }
 }

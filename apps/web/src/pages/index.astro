@@ -1,27 +1,94 @@
 ---
-import { employeeStats, onboardingStats } from '@hr/cms/server/stats'
-import { CLASSIFICATIONS, EMPLOYMENT_STATUSES, todayYmd } from '@hr/shared'
+import { complianceStats, dashboardStats, employeeStats, payrollTotals } from '@hr/cms/server/stats'
+import {
+  addMonths,
+  bucketKey,
+  bucketsFor,
+  CLASSIFICATIONS,
+  DEFAULT_PERIOD,
+  EMPLOYMENT_STATUSES,
+  formatDate,
+  formatPeso,
+  isPeriodKey,
+  percentChange,
+  PERIODS,
+  resolvePeriod,
+  todayYmd,
+} from '@hr/shared'
+import { COMPLIANCE_ROUTES } from '@hr/shared/modules'
+import type { Where } from 'payload'
 
-import BarChart from '../components/charts/BarChart.astro'
+import Chart from '../components/charts/Chart.astro'
 import SplitBars from '../components/charts/SplitBars.astro'
-import StatTile from '../components/StatTile.astro'
+import Icon from '../components/Icon.astro'
+import StatCard from '../components/StatCard.astro'
 import App from '../layouts/App.astro'
+import { describeActivity, REQUIREMENT_SHORT, timeAgo } from '../lib/activity'
+import { relName } from '../lib/format'
 
-const { payload } = Astro.locals
+const { payload, user } = Astro.locals
 const params = Astro.url.searchParams
 const branchId = Number(params.get('branch')) || null
 const classification = CLASSIFICATIONS.includes(params.get('classification') as never) ? params.get('classification') : null
+const periodKey = isPeriodKey(params.get('period')) ? (params.get('period') as (typeof PERIODS)[number]['key']) : DEFAULT_PERIOD
+const today = todayYmd()
+const year = Number(today.slice(0, 4))
+const period = resolvePeriod(periodKey, today)
+const sparkMonths = bucketsFor(addMonths(`${today.slice(0, 7)}-01`, -11), today, 'month')
+const filter = { branchId, classification }
 
-const [stats, branches, onboarding] = await Promise.all([
-  employeeStats(payload, { branchId, classification, scope: 'active' }),
+// Records filtered the same way as the charts (branch/classification), read with the user's access.
+const empWhere: Where[] = [{ dateHired: { exists: true } }]
+const leaveWhere: Where[] = [{ status: { equals: 'Pending' } }]
+if (branchId) empWhere.push({ station: { equals: branchId } }), leaveWhere.push({ 'employee.station': { equals: branchId } })
+if (classification) empWhere.push({ classification: { equals: classification } }), leaveWhere.push({ 'employee.classification': { equals: classification } })
+
+const [stats, branches, dash, compliance, recentHires, pendingLeaves, activity, latestPayroll, totals] = await Promise.all([
+  employeeStats(payload, { ...filter, scope: 'active' }),
   payload.find({ collection: 'branches', limit: 500, depth: 0, sort: 'name', overrideAccess: true, select: { name: true } }),
-  onboardingStats(payload),
+  dashboardStats(payload, filter, { from: period.from, to: period.to, prevFrom: period.prevFrom, prevTo: period.prevTo, sparkFrom: sparkMonths[0]!.key + '-01' }),
+  Promise.all(
+    Object.entries(COMPLIANCE_ROUTES).map(async ([route, mod]) => ({ route, slug: mod.slug, title: mod.title, stats: await complianceStats(payload, mod.slug, year, filter) })),
+  ),
+  payload.find({ collection: 'employees', where: { and: empWhere }, sort: ['-dateHired', '-id'], limit: 5, depth: 1, user, overrideAccess: false }),
+  payload.find({ collection: 'wellness-leaves', where: { and: leaveWhere }, sort: ['-dateFiling', '-id'], limit: 5, depth: 0, user, overrideAccess: false }),
+  payload.find({ collection: 'audit-logs', sort: '-createdAt', limit: 8, depth: 0, user, overrideAccess: false }),
+  payload.find({ collection: 'payroll-periods', sort: ['-periodEnd', '-id'], limit: 1, depth: 0, user, overrideAccess: false }),
+  payrollTotals(payload),
 ])
 
+// ---- Headcount ----
 const statusCount = (s: string) => stats.byStatus.find((r) => r.status === s)?.count ?? 0
-const tone = { Active: 'success', Resigned: 'warning', Retired: 'primary', Terminated: 'danger' } as const
+const active = statusCount('Active')
+const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : 0)
 
-// Gender split, overall and per employment status
+// ---- Movement in the period ----
+const buckets = bucketsFor(period.from, period.to, period.bucket)
+const sumInto = (rows: { date: string; count: number }[]) => {
+  const m = new Map<string, number>()
+  for (const r of rows) m.set(bucketKey(r.date, period.bucket), (m.get(bucketKey(r.date, period.bucket)) ?? 0) + r.count)
+  return buckets.map((b) => m.get(b.key) ?? 0)
+}
+const hireSeries = sumInto(dash.hiresByDay)
+const sepSeries = sumInto(dash.separationsByDay)
+const hiresNow = hireSeries.reduce((a, b) => a + b, 0)
+const sepsNow = sepSeries.reduce((a, b) => a + b, 0)
+const net = hiresNow - sepsNow
+const sparkHires = sparkMonths.map((m) => dash.hiresByMonth.get(m.key) ?? 0)
+const sparkSeps = sparkMonths.map((m) => dash.separationsByMonth.get(m.key) ?? 0)
+
+// ---- Onboarding & compliance ----
+const stageCount = (s: string) => dash.pipeline.find((p) => p.status === s)?.count ?? 0
+const STAGES = ['Pending', 'For Interview', 'For OJT', 'Hired'] as const
+const inProgress = stageCount('Pending') + stageCount('For Interview') + stageCount('For OJT')
+const stageMax = Math.max(1, ...STAGES.map(stageCount))
+const compliancePct = compliance.map((c) => ({ ...c, pct: c.stats.active ? Math.round((c.stats.complied / c.stats.active) * 100) : 0 }))
+const withActive = compliancePct.filter((c) => c.stats.active)
+const avgCompliance = withActive.length ? Math.round(withActive.reduce((s, c) => s + c.pct, 0) / withActive.length) : null
+const missingTotal = compliance.reduce((s, c) => s + c.stats.missing, 0)
+
+// ---- Composition ----
+const activeByClass = CLASSIFICATIONS.map((c) => stats.byClassification.find((r) => r.classification === c && r.status === 'Active')?.count ?? 0)
 const genderOf = (status: string | null, gender: string) =>
   stats.byStatusGender.filter((r) => (status ? r.status === status : true) && r.gender === gender).reduce((s, r) => s + r.count, 0)
 const genderRows = [null, ...EMPLOYMENT_STATUSES].map((status) => ({
@@ -31,113 +98,405 @@ const genderRows = [null, ...EMPLOYMENT_STATUSES].map((status) => ({
     { label: 'Female', value: genderOf(status, 'Female'), slot: 2 as const },
   ],
 }))
-
-// Classification by employment status
 const classSeries = CLASSIFICATIONS.map((c, i) => ({
   label: c,
   slot: (i + 1) as 1 | 2 | 3,
   data: EMPLOYMENT_STATUSES.map((s) => stats.byClassification.find((r) => r.classification === c && r.status === s)?.count ?? 0),
 }))
-
-// Positions: top 15 + Others (active employees)
-const TOP = 15
+const TOP = 12
 const topPositions = stats.positions.slice(0, TOP)
 const others = stats.positions.slice(TOP).reduce((s, p) => s + p.total, 0)
 const positionLabels = [...topPositions.map((p) => p.position), ...(others ? [`Others (${stats.positions.length - TOP} titles)`] : [])]
 const positionData = [...topPositions.map((p) => p.total), ...(others ? [others] : [])]
 
-// Hires vs separations, last 10 years
-const thisYear = Number(todayYmd().slice(0, 4))
-const years = Array.from({ length: 10 }, (_, i) => thisYear - 9 + i)
-const hires = years.map((y) => stats.hires.find((h) => h.year === y)?.count ?? 0)
-const separations = years.map((y) => stats.separations.filter((s) => s.year === y).reduce((sum, s) => sum + s.count, 0))
+// ---- Links that keep the current filters ----
+const qs = (extra: [string, string][] = [], branchKey = 'branch') => {
+  const p = new URLSearchParams(extra)
+  if (branchId) p.append(branchKey, String(branchId))
+  if (classification && branchKey === 'branch') p.append('classification', classification)
+  const s = p.toString()
+  return s ? `?${s}` : ''
+}
+const branchName = branchId ? branches.docs.find((b) => b.id === branchId)?.name : null
+const scopeNote = [branchName, classification].filter(Boolean).join(' · ') || 'All branches and classifications'
 
-const inPipeline = onboarding.byStatus.filter((s) => ['Pending', 'For Interview', 'For OJT'].includes(s.status)).reduce((a, b) => a + b.count, 0)
-const incomplete = onboarding.byRequirements.find((r) => r.status === 'Incomplete')?.count ?? 0
-const filterNote = [branchId && branches.docs.find((b) => b.id === branchId)?.name, classification].filter(Boolean).join(' · ')
+// ---- Greeting ----
+const hour = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', hour: 'numeric', hourCycle: 'h23' }).format(new Date()))
+const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
+const firstName = (user?.name ?? '').trim().split(/\s+/)[0] || 'there'
+const longDate = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).format(new Date())
+
+const latest = latestPayroll.docs[0]
+const latestTotals = latest ? totals.get(latest.id) : undefined
+const entries = activity.docs.map(describeActivity)
+const actionStyle = {
+  create: { icon: 'plus', cls: 'bg-success-soft text-success' },
+  update: { icon: 'edit', cls: 'bg-primary-soft text-primary-ink' },
+  delete: { icon: 'trash', cls: 'bg-danger-soft text-danger' },
+  import: { icon: 'upload', cls: 'bg-warning-soft text-warning' },
+  other: { icon: 'activity', cls: 'bg-surface-2 text-fg-2' },
+} as const
 ---
-<App title="Dashboard" heading="Employee statistics" description="Headcount by employment status, gender, classification and position.">
-  <form method="get" class="mb-6 flex flex-wrap items-end gap-3" data-autosubmit>
-    <div>
-      <label class="label" for="branch">Branch</label>
-      <select class="input min-w-48" id="branch" name="branch">
+<App title="Dashboard" heading={`${greeting}, ${firstName}`} description={`${longDate} · Here's how your workforce is doing.`}>
+  <Fragment slot="actions">
+    <a href="/leave/new" class="btn-secondary"><Icon name="calendar" /> File leave</a>
+    <a href="/employees/new" class="btn-primary"><Icon name="userPlus" /> Add employee</a>
+  </Fragment>
+
+  <!-- Filters -->
+  <form method="get" class="card mb-6 grid grid-cols-2 items-end gap-3 p-3 sm:flex sm:flex-wrap sm:p-4" data-autosubmit aria-label="Dashboard filters">
+    <div class="col-span-2 min-w-0 sm:col-span-1">
+      <label class="label !mb-1 text-xs" for="period">Period</label>
+      <select class="input py-1.5 sm:min-w-40" id="period" name="period">
+        {PERIODS.map((p) => <option value={p.key} selected={p.key === period.key}>{p.label}</option>)}
+      </select>
+    </div>
+    <div class="min-w-0">
+      <label class="label !mb-1 text-xs" for="branch">Branch</label>
+      <select class="input py-1.5 sm:min-w-44" id="branch" name="branch">
         <option value="">All branches</option>
         {branches.docs.map((b) => <option value={b.id} selected={b.id === branchId}>{b.name}</option>)}
       </select>
     </div>
-    <div>
-      <label class="label" for="classification">Classification</label>
-      <select class="input min-w-40" id="classification" name="classification">
+    <div class="min-w-0">
+      <label class="label !mb-1 text-xs" for="classification">Classification</label>
+      <select class="input py-1.5 sm:min-w-40" id="classification" name="classification">
         <option value="">All classifications</option>
         {CLASSIFICATIONS.map((c) => <option selected={c === classification}>{c}</option>)}
       </select>
     </div>
     <noscript><button class="btn-secondary">Apply</button></noscript>
-    {(branchId || classification) && <a href="/" class="btn-ghost">Clear filters</a>}
+    {(branchId || classification || period.key !== DEFAULT_PERIOD) && <a href="/" class="btn-ghost btn-sm mb-0.5">Reset</a>}
+    <p class="col-span-2 text-xs text-muted sm:ml-auto sm:text-right" data-period-note>
+      <span class="font-medium text-fg-2">{formatDate(period.from)} – {formatDate(period.to)}</span><br class="hidden sm:block" />
+      <span class="sm:hidden"> · </span>{period.prevLabel}
+    </p>
   </form>
 
-  <div class="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-    <StatTile label="Total employees" value={stats.total} note={filterNote || 'All records'} href="/employees" />
-    {
-      EMPLOYMENT_STATUSES.map((s) => (
-        <StatTile
-          label={s}
-          value={statusCount(s)}
-          tone={tone[s]}
-          note={stats.total ? `${Math.round((statusCount(s) / stats.total) * 1000) / 10}% of total` : undefined}
-          href={`/employees?status=${s}${branchId ? `&branch=${branchId}` : ''}${classification ? `&classification=${classification}` : ''}`}
-        />
-      ))
-    }
-  </div>
-
-  <div class="mt-6 grid gap-4 xl:grid-cols-2">
-    <SplitBars title="Male and female employees" subtitle="Share of each gender, overall and by employment status" rows={genderRows} />
-    <BarChart
-      title="Classification by employment status"
-      subtitle="COS, Contractual and Regular employees in each status"
-      spec={{ labels: [...EMPLOYMENT_STATUSES], series: classSeries, stacked: true, unit: 'employees' }}
+  <!-- KPIs -->
+  <section aria-label="Key figures" class="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 sm:gap-4">
+    <StatCard label="Active employees" value={active} icon="users" tone="primary" note={`${pct(active, stats.total)}% of ${stats.total.toLocaleString()} records`} href={`/employees${qs([['status', 'Active']])}`} />
+    <StatCard
+      label="New hires"
+      value={hiresNow}
+      icon="userPlus"
+      tone="success"
+      delta={{ pct: percentChange(hiresNow, dash.prevHires), label: period.prevLabel }}
+      spark={sparkHires}
+      sparkSlot={1}
+      href={`/employees${qs([['hiredFrom', period.from], ['hiredTo', period.to]])}`}
     />
-  </div>
+    <StatCard
+      label="Separations"
+      value={sepsNow}
+      icon="userMinus"
+      tone="danger"
+      delta={{ pct: percentChange(sepsNow, dash.prevSeparations), label: period.prevLabel, invert: true }}
+      spark={sparkSeps}
+      sparkSlot={2}
+      href={`/employees${qs([['status', 'Resigned'], ['status', 'Retired'], ['status', 'Terminated']])}`}
+    />
+    <StatCard
+      label="Leave days filed"
+      value={dash.leave.days}
+      icon="calendar"
+      tone="warning"
+      delta={{ pct: percentChange(dash.leave.days, dash.leave.prevDays), label: period.prevLabel }}
+      note={`${dash.leave.filings} filing${dash.leave.filings === 1 ? '' : 's'} · ${dash.leave.pending} pending`}
+      href={`/leave?year=${period.to.slice(0, 4)}`}
+    />
+    <StatCard
+      label="Applicants in progress"
+      value={inProgress}
+      icon="briefcase"
+      tone="neutral"
+      note={`${dash.incompleteRequirements} with incomplete requirements`}
+      href={`/onboarding${qs([['status', 'Pending'], ['status', 'For Interview'], ['status', 'For OJT']], 'station')}`}
+    />
+    <StatCard
+      label={`Compliance ${year}`}
+      value={avgCompliance === null ? '—' : `${avgCompliance}%`}
+      icon="checkCircle"
+      tone="success"
+      note={avgCompliance === null ? 'No active employees' : `${missingTotal.toLocaleString()} submissions missing`}
+      href={`/requirements?year=${year}`}
+    />
+  </section>
 
-  <div class="mt-4 grid gap-4 xl:grid-cols-5">
-    <div class="xl:col-span-3">
-      <BarChart
-        title="Position / designation"
-        subtitle={`Active employees per title${others ? `, top ${TOP} shown` : ''}`}
-        spec={{ labels: positionLabels, series: [{ label: 'Active employees', data: positionData, slot: 1 }], horizontal: true, valueLabels: true, unit: 'employees' }}
+  <!-- Trends -->
+  <section class="mt-8" aria-labelledby="trends-title">
+    <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+      <h2 id="trends-title" class="section-title">Workforce trends</h2>
+      <p class="text-xs text-muted">{scopeNote}</p>
+    </div>
+    <div class="grid gap-4 lg:grid-cols-3">
+      <div class="min-w-0 lg:col-span-2">
+        <Chart
+          title="Hires and separations"
+          subtitle={`${period.label} · separated = resigned, retired or terminated (by last day of service)`}
+          spec={{
+            kind: 'area',
+            labels: buckets.map((b) => b.label),
+            series: [
+              { label: 'Hired', data: hireSeries, slot: 1 },
+              { label: 'Separated', data: sepSeries, slot: 2 },
+            ],
+            unit: 'employees',
+          }}
+          height={260}
+          level={3}
+          emptyText="No hires or separations in this period."
+        >
+          <span slot="meta" class:list={['badge shrink-0', net > 0 ? 'badge-success' : net < 0 ? 'badge-danger' : 'badge-neutral']} title="Hires minus separations">
+            Net {net > 0 ? '+' : ''}{net.toLocaleString()}
+          </span>
+        </Chart>
+      </div>
+      <Chart
+        title="Active workforce by classification"
+        subtitle="Share of active employees"
+        spec={{ kind: 'doughnut', labels: [...CLASSIFICATIONS], series: [{ label: 'Active employees', data: activeByClass, slot: 1 }], sliceSlots: [1, 2, 3], unit: 'employees' }}
+        center={{ value: active.toLocaleString(), label: 'active' }}
+        level={3}
         emptyText="No active employees yet."
       />
     </div>
-    <div class="space-y-4 xl:col-span-2">
-      <BarChart
-        title="Hires and separations per year"
-        subtitle="Separated = resigned, retired or terminated (by last day of service)"
-        spec={{
-          labels: years.map(String),
-          series: [
-            { label: 'Hired', data: hires, slot: 1 },
-            { label: 'Separated', data: separations, slot: 2 },
-          ],
-          unit: 'employees',
-        }}
-        height={240}
+  </section>
+
+  <!-- Composition -->
+  <section class="mt-8" aria-labelledby="stats-title">
+    <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+      <h2 id="stats-title" class="section-title">Employee statistics</h2>
+      <p class="text-xs text-muted">Headcount by gender, classification, status and position</p>
+    </div>
+    <div class="grid gap-4 xl:grid-cols-2">
+      <SplitBars title="Male and female employees" subtitle="Share of each gender, overall and by employment status" rows={genderRows} level={3} />
+      <Chart
+        title="Classification by employment status"
+        subtitle="COS, Contractual and Regular employees in each status"
+        spec={{ labels: [...EMPLOYMENT_STATUSES], series: classSeries, stacked: true, unit: 'employees' }}
+        level={3}
       />
-      <section class="card p-4 sm:p-5">
-        <h2 class="text-sm font-semibold">Onboarding</h2>
-        <div class="mt-3 grid grid-cols-2 gap-3">
-          <a href="/onboarding" class="rounded-lg bg-surface-2 p-3 hover:bg-primary-soft">
-            <p class="text-xs text-muted">Applicants in progress</p>
-            <p class="mt-1 text-2xl font-semibold">{inPipeline}</p>
-          </a>
-          <a href="/onboarding?requirements=Incomplete" class="rounded-lg bg-surface-2 p-3 hover:bg-primary-soft">
-            <p class="text-xs text-muted">Incomplete requirements</p>
-            <p class="mt-1 text-2xl font-semibold">{incomplete}</p>
-          </a>
+    </div>
+    <div class="mt-4 grid gap-4 xl:grid-cols-5">
+      <div class="min-w-0 xl:col-span-3">
+        <Chart
+          title="Position / designation"
+          subtitle={`Active employees per title${others ? `, top ${TOP} shown` : ''}`}
+          spec={{ labels: positionLabels, series: [{ label: 'Active employees', data: positionData, slot: 1 }], horizontal: true, valueLabels: true, unit: 'employees' }}
+          emptyText="No active employees yet."
+          level={3}
+        />
+      </div>
+      <div class="min-w-0 space-y-4 xl:col-span-2">
+        <!-- Annual requirements -->
+        <section class="card p-4 sm:p-5" aria-labelledby="compliance-title">
+          <header class="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <h3 id="compliance-title" class="text-sm font-semibold">Annual requirements {year}</h3>
+              <p class="mt-0.5 text-xs text-muted">Active employees with a submitted record</p>
+            </div>
+            <a href={`/requirements?year=${year}`} class="shrink-0 text-xs font-medium text-primary-ink hover:underline">Open</a>
+          </header>
+          <ul class="space-y-3.5">
+            {
+              compliancePct.map((c) => (
+                <li>
+                  <a href={`/requirements/${c.route}?year=${year}`} class="group block" title={c.title}>
+                    <div class="mb-1.5 flex items-baseline justify-between gap-2 text-sm">
+                      <span class="font-medium text-fg-2 group-hover:text-fg">{REQUIREMENT_SHORT[c.slug] ?? c.title}</span>
+                      <span class="text-xs text-muted tabular">
+                        <span class="font-semibold text-fg">{c.pct}%</span> · {c.stats.complied}/{c.stats.active}
+                        {c.stats.missing > 0 && <span class="text-warning"> · {c.stats.missing} missing</span>}
+                      </span>
+                    </div>
+                    <div class="h-2 overflow-hidden rounded-full bg-surface-3" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={c.pct} aria-label={`${REQUIREMENT_SHORT[c.slug] ?? c.title} compliance`}>
+                      <div class:list={['h-full rounded-full transition-[width] duration-500', c.pct >= 100 ? 'bg-success' : 'bg-primary']} style={`width:${c.pct}%`} />
+                    </div>
+                  </a>
+                </li>
+              ))
+            }
+          </ul>
+        </section>
+
+        <!-- Onboarding pipeline -->
+        <section class="card p-4 sm:p-5" aria-labelledby="pipeline-title">
+          <header class="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <h3 id="pipeline-title" class="text-sm font-semibold">Onboarding pipeline</h3>
+              <p class="mt-0.5 text-xs text-muted">Applicants at each stage{branchName ? ` · ${branchName}` : ''}</p>
+            </div>
+            <a href="/onboarding" class="shrink-0 text-xs font-medium text-primary-ink hover:underline">Open</a>
+          </header>
+          <ol class="space-y-2.5">
+            {
+              STAGES.map((s, i) => (
+                <li>
+                  <a href={`/onboarding${qs([['status', s]], 'station')}`} class="group flex items-center gap-3 text-sm">
+                    <span class="w-24 shrink-0 text-fg-2 group-hover:text-fg">{s}</span>
+                    <span class="relative h-6 flex-1 overflow-hidden rounded-md bg-surface-2">
+                      <span class="absolute inset-y-0 left-0 rounded-md" style={`width:${(stageCount(s) / stageMax) * 100}%; background: var(--series-${i === 3 ? 3 : 1}); opacity:${i === 3 ? 1 : 0.55 + i * 0.15}`} />
+                    </span>
+                    <span class="w-8 shrink-0 text-right font-semibold tabular">{stageCount(s)}</span>
+                  </a>
+                </li>
+              ))
+            }
+          </ol>
+          <p class="mt-3 text-xs text-muted">
+            {stageCount('Not Hired')} not hired · {stageCount('Withdrawn')} withdrawn ·
+            <a href={`/onboarding${qs([['requirements', 'Incomplete']], 'station')}`} class="text-primary-ink hover:underline">{dash.incompleteRequirements} incomplete requirements</a>
+          </p>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <!-- Recent -->
+  <section class="mt-8" aria-labelledby="recent-title">
+    <h2 id="recent-title" class="section-title mb-3">Recent activity</h2>
+    <div class="grid gap-4 xl:grid-cols-3">
+      <div class="min-w-0 space-y-4 xl:col-span-2">
+        <section class="card overflow-hidden" aria-labelledby="hires-title">
+          <header class="flex items-center justify-between gap-3 px-4 pt-4 sm:px-5">
+            <h3 id="hires-title" class="text-sm font-semibold">Latest hires</h3>
+            <a href={`/employees${qs([['sort', '-dateHired']])}`} class="text-xs font-medium text-primary-ink hover:underline">View all</a>
+          </header>
+          {
+            recentHires.docs.length ? (
+              <div class="mt-3 overflow-x-auto">
+                <table class="table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Position</th>
+                      <th class="hidden md:table-cell">Branch</th>
+                      <th class="text-right">Hired</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recentHires.docs.map((e) => (
+                      <tr>
+                        <td class="font-medium">
+                          <a href={`/employees/${e.id}`} class="hover:text-primary-ink hover:underline">{e.fullName}</a>
+                        </td>
+                        <td class="text-fg-2">{e.position || '—'}</td>
+                        <td class="hidden text-fg-2 md:table-cell">{relName(e.station) || '—'}</td>
+                        <td class="whitespace-nowrap text-right text-fg-2 tabular">{formatDate(e.dateHired)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p class="px-5 py-10 text-center text-sm text-muted">No hire dates recorded yet.</p>
+            )
+          }
+        </section>
+
+        <div class="grid gap-4 md:grid-cols-2">
+          <section class="card p-4 sm:p-5" aria-labelledby="pending-title">
+            <header class="mb-3 flex items-center justify-between gap-3">
+              <h3 id="pending-title" class="text-sm font-semibold">Pending leave filings</h3>
+              <a href="/leave?status=Pending" class="text-xs font-medium text-primary-ink hover:underline">View all</a>
+            </header>
+            {
+              pendingLeaves.docs.length ? (
+                <ul class="-mx-2 divide-y divide-line">
+                  {pendingLeaves.docs.map((l) => (
+                    <li>
+                      <a href={`/leave/${l.id}`} class="flex items-center justify-between gap-3 rounded-lg px-2 py-2.5 transition-colors hover:bg-surface-2">
+                        <span class="min-w-0">
+                          <span class="block truncate text-sm font-medium">{[l.lastName, l.firstName].filter(Boolean).join(', ')}</span>
+                          <span class="block text-xs text-muted">{formatDate(l.inclusiveDateFrom)}{l.inclusiveDateTo !== l.inclusiveDateFrom ? ` – ${formatDate(l.inclusiveDateTo)}` : ''}</span>
+                        </span>
+                        <span class="badge-warning shrink-0 tabular">{l.days ?? 0} day{l.days === 1 ? '' : 's'}</span>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div class="flex flex-col items-center gap-2 py-8 text-center">
+                  <span class="flex size-9 items-center justify-center rounded-full bg-success-soft text-success"><Icon name="check" /></span>
+                  <p class="text-sm text-muted">Nothing waiting for approval.</p>
+                </div>
+              )
+            }
+          </section>
+
+          <section class="card flex flex-col p-4 sm:p-5" aria-labelledby="payroll-title">
+            <header class="mb-3 flex items-center justify-between gap-3">
+              <h3 id="payroll-title" class="text-sm font-semibold">Latest payroll</h3>
+              <a href="/payroll" class="text-xs font-medium text-primary-ink hover:underline">All periods</a>
+            </header>
+            {
+              latest ? (
+                <a href={`/payroll/${latest.id}`} class="group flex flex-1 flex-col rounded-lg border border-line p-4 transition-colors hover:border-line-strong hover:bg-surface-2">
+                  <span class="flex items-start justify-between gap-2">
+                    <span class="min-w-0">
+                      <span class="block truncate font-semibold group-hover:text-primary-ink">{latest.name}</span>
+                      <span class="block text-xs text-muted">
+                        {formatDate(latest.periodStart)} – {formatDate(latest.periodEnd)}
+                      </span>
+                    </span>
+                    <span class={latest.status === 'Released' ? 'badge-success' : 'badge-warning'}>{latest.status}</span>
+                  </span>
+                  <span class="mt-4 grid grid-cols-2 gap-3 text-sm">
+                    <span>
+                      <span class="block text-xs text-muted">Net pay total</span>
+                      <span class="block text-lg font-semibold tabular">{formatPeso(latestTotals?.net ?? 0)}</span>
+                    </span>
+                    <span>
+                      <span class="block text-xs text-muted">Payslips</span>
+                      <span class="block text-lg font-semibold tabular">{(latestTotals?.count ?? 0).toLocaleString()}</span>
+                    </span>
+                  </span>
+                  {latest.payDate && <span class="mt-3 text-xs text-muted">Pay date {formatDate(latest.payDate)}</span>}
+                </a>
+              ) : (
+                <div class="flex flex-1 flex-col items-center justify-center gap-2 py-8 text-center">
+                  <span class="flex size-9 items-center justify-center rounded-full bg-surface-2 text-muted"><Icon name="wallet" /></span>
+                  <p class="text-sm text-muted">No payroll periods yet.</p>
+                  <a href="/payroll/new" class="btn-secondary btn-sm mt-1">Create one</a>
+                </div>
+              )
+            }
+          </section>
         </div>
+      </div>
+
+      <!-- Activity timeline -->
+      <section class="card p-4 sm:p-5" aria-labelledby="timeline-title">
+        <header class="mb-4 flex items-center justify-between gap-3">
+          <h3 id="timeline-title" class="text-sm font-semibold">Activity</h3>
+          <a href="/audit" class="text-xs font-medium text-primary-ink hover:underline">Audit log</a>
+        </header>
+        {
+          entries.length ? (
+            <ol class="relative space-y-4 before:absolute before:inset-y-2 before:left-[15px] before:w-px before:bg-line">
+              {entries.map((a) => (
+                <li class="relative flex gap-3">
+                  <span class:list={['relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full ring-4 ring-surface', actionStyle[a.action].cls]} aria-hidden="true">
+                    <Icon name={actionStyle[a.action].icon} class="size-3.5" />
+                  </span>
+                  <div class="min-w-0 pt-1 text-sm">
+                    <p class="text-fg-2">
+                      <span class="font-medium text-fg">{a.who}</span> {a.verb} {a.what}{" "}
+                      {a.record && (a.href ? <a href={a.href} class="font-medium text-fg hover:text-primary-ink hover:underline">{a.record}</a> : <span class="font-medium text-fg">{a.record}</span>)}
+                    </p>
+                    <time datetime={a.at} class="text-xs text-muted" title={new Date(a.at).toLocaleString('en-PH', { timeZone: 'Asia/Manila' })}>{timeAgo(a.at)}</time>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p class="py-8 text-center text-sm text-muted">No activity recorded yet.</p>
+          )
+        }
       </section>
     </div>
-  </div>
+  </section>
 </App>
 
 <script>

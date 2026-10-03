@@ -69,6 +69,8 @@ describe('colors', () => {
   })
   it('flags low-contrast colors and keeps defaults readable', () => {
     expect(contrastWarnings({ primary: '#ffff00' })).toHaveLength(1)
+    // Yellow accent/warning are fills (warning text is darkened by the stylesheet), not flagged.
+    expect(contrastWarnings({ accent: '#ffc72c', warning: '#ffc72c' })).toHaveLength(0)
     expect(contrastWarnings(DEFAULT_PALETTE)).toHaveLength(0)
   })
   it('falls back on invalid hex', () => {

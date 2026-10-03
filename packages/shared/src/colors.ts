@@ -13,17 +13,29 @@ export type Palette = {
 
 export const PALETTE_KEYS = ['primary', 'secondary', 'accent', 'success', 'warning', 'danger'] as const
 
+/** Default brand colours: blue #00539B, red #C8102E, yellow #FFC72C, gray #777777 (on white). */
 export const DEFAULT_PALETTE: Palette = {
-  primary: '#1d4ed8',
-  secondary: '#475569',
-  accent: '#0d9488',
+  primary: '#00539b',
+  secondary: '#777777',
+  accent: '#ffc72c',
   success: '#15803d',
-  warning: '#b45309',
-  danger: '#b91c1c',
+  warning: '#ffc72c',
+  danger: '#c8102e',
 }
 
 export const PALETTE_PRESETS: { name: string; palette: Palette }[] = [
-  { name: 'Civil Blue', palette: DEFAULT_PALETTE },
+  { name: 'Default (Blue, Red, Yellow)', palette: DEFAULT_PALETTE },
+  {
+    name: 'Civil Blue',
+    palette: {
+      primary: '#1d4ed8',
+      secondary: '#475569',
+      accent: '#0d9488',
+      success: '#15803d',
+      warning: '#b45309',
+      danger: '#b91c1c',
+    },
+  },
   {
     name: 'Forest',
     palette: {
@@ -95,12 +107,15 @@ export function readableOn(hex: string): '#ffffff' | '#000000' {
 }
 
 /**
- * Brand colors are used as text/icons on the light page background, so each needs at least 3:1
- * contrast against white (WCAG 1.4.11). Text placed *on* a brand color always uses `readableOn`.
+ * Colours that are used directly as text/icons on the light page background need at least 3:1
+ * contrast against white (WCAG 1.4.11). Accent and warning are only used as fills; where warning
+ * appears as text the app darkens it automatically. Text placed *on* a colour uses `readableOn`.
  */
+export const TEXT_COLOR_KEYS = ['primary', 'secondary', 'success', 'danger'] as const
+
 export function contrastWarnings(p: Partial<Palette>): string[] {
   const warnings: string[] = []
-  for (const key of PALETTE_KEYS) {
+  for (const key of TEXT_COLOR_KEYS) {
     const hex = p[key]
     if (!isHex(hex)) continue
     const ratio = contrastRatio(hex, '#ffffff')

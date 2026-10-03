@@ -28,6 +28,12 @@ execFileSync(path.join(root, 'node_modules/.bin/tsx'), ['src/seed/index.ts'], {
   env: { ...env, HR_SEED_FORCE: '1' },
   stdio: 'inherit',
 })
+// First System Admin through the real (bundled) create-admin command, as on the server.
+execFileSync(process.execPath, ['apps/cms/dist-cli/create-admin.mjs', '--name', 'Ana Admin', '--email', 'admin@e2e.test'], {
+  cwd: root,
+  env: { ...env, HR_ADMIN_PASSWORD: 'Adm1nPassword!' },
+  stdio: 'inherit',
+})
 const server = spawn(process.execPath, ['server.mjs'], { cwd: root, env, stdio: 'inherit' })
 const stop = () => {
   server.kill()

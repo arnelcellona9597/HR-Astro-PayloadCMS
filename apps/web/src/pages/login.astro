@@ -32,11 +32,6 @@ if (Astro.request.method === 'POST') {
 }
 ---
 <Auth title="Sign in" subtitle="HR staff access only.">
-  {notice === 'registered' && (
-    <p class="mb-4 rounded-lg bg-success-soft px-3 py-2 text-sm text-success" role="status">
-      Registration received. A System Admin must approve your account before you can sign in.
-    </p>
-  )}
   {notice === 'expired' && (
     <p class="mb-4 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning" role="status">
       Your session ended (sessions last 12 hours). Please sign in again.
@@ -47,8 +42,11 @@ if (Astro.request.method === 'POST') {
       The verification code expired or was entered wrong too many times. Please sign in again.
     </p>
   )}
-  {notice === 'verified' && (
-    <p class="mb-4 rounded-lg bg-success-soft px-3 py-2 text-sm text-success" role="status">Email verified. You can now sign in.</p>
+  {notice === 'password-set' && (
+    <p class="mb-4 rounded-lg bg-success-soft px-3 py-2 text-sm text-success" role="status">Password saved. Sign in with your new password.</p>
+  )}
+  {notice === 'no-signup' && (
+    <p class="mb-4 rounded-lg bg-primary-soft px-3 py-2 text-sm text-primary-ink" role="status">Accounts are created by a System Admin. Ask yours for an invitation.</p>
   )}
   {notice === 'password' && (
     <p class="mb-4 rounded-lg bg-success-soft px-3 py-2 text-sm text-success" role="status">Password changed. Please sign in again.</p>
@@ -72,5 +70,5 @@ if (Astro.request.method === 'POST') {
     </div>
     <button class="btn-primary w-full">Sign in</button>
   </form>
-  <Fragment slot="footer">New HR staff? <a href="/register" class="font-medium text-primary-ink hover:underline">Request an account</a></Fragment>
+  <Fragment slot="footer">New HR staff? Ask your System Admin to create your account.</Fragment>
 </Auth>

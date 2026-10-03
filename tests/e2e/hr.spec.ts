@@ -42,7 +42,7 @@ test('the first System Admin (created with the server command) signs in with the
   await expect(page.getByText(/Signed in until/)).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Employee statistics' })).toBeVisible()
   await expect(page.getByText('Male and female employees')).toBeVisible()
-  await expect(page.locator('canvas[data-bar-chart]').first()).toBeVisible()
+  await expect(page.locator('canvas[data-chart]').first()).toBeVisible()
 })
 
 test('a System Admin invites HR Staff, who choose their own password; staff cannot manage accounts', async ({ page, browser }) => {
@@ -74,6 +74,28 @@ test('a System Admin invites HR Staff, who choose their own password; staff cann
   await expect(page.getByText("You don't have permission to open that page.")).toBeVisible()
   await page.goto('/settings/email-server')
   await expect(page.getByText("You don't have permission to open that page.")).toBeVisible()
+})
+
+test('dashboard: period filter, real-data KPIs and an activity feed that respects access', async ({ page, browser }) => {
+  await login(page, ADMIN)
+  await page.goto('/')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(/Good (morning|afternoon|evening), Ana/)
+  await expect(page.locator('#period')).toHaveValue('this-year')
+  await page.selectOption('#period', '10y')
+  await page.waitForURL(/period=10y/)
+  await expect(page.locator('[data-period-note]')).toContainText('vs previous 10 years')
+  await expect(page.getByRole('link', { name: /New hires/ })).toBeVisible()
+  await expect(page.locator('canvas[data-chart]').first()).toBeVisible()
+  // The admin sees account activity; HR Staff do not (audit-log access rules apply to the feed).
+  const feed = (p: Page) => p.locator('section[aria-labelledby="timeline-title"]')
+  await expect(feed(page)).toContainText('HR account')
+  const staffCtx = await browser.newContext()
+  const staff = await staffCtx.newPage()
+  await login(staff, STAFF)
+  await staff.goto('/')
+  await expect(feed(staff)).toBeVisible()
+  await expect(feed(staff)).not.toContainText('HR account')
+  await staffCtx.close()
 })
 
 test('security: encoded login URLs are blocked, headers are set, rate limits hold', async ({ page, request }) => {
@@ -286,14 +308,74 @@ test('messages: send an announcement to a branch group', async ({ page }) => {
   expect(mail.text).not.toContain('{{')
 })
 
+test('app shell: collapsible sidebar, right side, compact header, account menu and log out', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
+  await login(page, ADMIN)
+  for (const path of ['/', '/employees', '/leave', '/payroll', '/onboarding', '/requirements', '/settings', '/audit', '/users']) await page.goto(path)
+  expect(errors, errors.join('\n')).toEqual([])
+
+  await page.goto('/')
+  const shell = page.locator('#shell')
+  const sidebar = page.locator('#sidebar')
+  await page.locator('#topbar [data-sidebar-toggle]').click()
+  await expect(shell).toHaveAttribute('data-sidebar', 'collapsed')
+  await expect.poll(async () => (await sidebar.boundingBox())!.width).toBeLessThan(100)
+  await sidebar.getByRole('link', { name: 'Employees' }).hover()
+  await expect(page.locator('#nav-tip')).toHaveText('Employees')
+  await expect(page.locator('#nav-tip')).toHaveAttribute('data-show', 'true')
+  await page.reload()
+  await expect(shell).toHaveAttribute('data-sidebar', 'collapsed')
+  await expect(sidebar.getByRole('link', { name: 'Employees' })).toBeVisible()
+  await page.locator('#topbar [data-sidebar-toggle]').click()
+  await expect(shell).toHaveAttribute('data-sidebar', 'expanded')
+
+  // Account menu by keyboard; display preferences live in it.
+  await page.locator('#user-menu-button').focus()
+  await page.keyboard.press('Enter')
+  const menu = page.getByRole('menu')
+  await expect(menu).toBeVisible()
+  await expect(menu.getByRole('menuitem', { name: 'My profile' })).toBeFocused()
+  await page.keyboard.press('ArrowDown')
+  await expect(menu.getByRole('menuitem', { name: 'HR accounts' })).toBeFocused()
+  await menu.getByRole('menuitemcheckbox', { name: 'Sidebar on the right' }).click()
+  await expect(shell).toHaveAttribute('data-side', 'right')
+  expect((await sidebar.boundingBox())!.x).toBeGreaterThan(1000)
+  await menu.getByRole('menuitemcheckbox', { name: 'Compact header' }).click()
+  await expect.poll(async () => (await page.locator('#topbar').boundingBox())!.height).toBeLessThanOrEqual(49)
+  await page.keyboard.press('Escape')
+  await expect(menu).toBeHidden()
+  await expect(page.locator('#user-menu-button')).toBeFocused()
+  await page.reload()
+  await expect(shell).toHaveAttribute('data-side', 'right')
+  await expect(shell).toHaveAttribute('data-header', 'compact')
+
+  // Log out lives in the account menu, not the sidebar.
+  await expect(sidebar.getByRole('button', { name: /sign out|log out/i })).toHaveCount(0)
+  await page.locator('#user-menu-button').click()
+  await page.getByRole('menuitem', { name: 'Log out' }).click()
+  await page.waitForURL('**/login')
+  await page.goto('/')
+  await page.waitForURL(/\/login/)
+})
+
 test('pages fit a phone screen without sideways scrolling', async ({ browser }) => {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } })
   const page = await ctx.newPage()
   await login(page, ADMIN)
-  for (const path of ['/', '/employees', '/leave', '/branches', '/requirements', '/payroll', '/messages', '/messages/new', '/data', '/login']) {
+  for (const path of ['/', '/?period=90d', '/employees', '/onboarding', '/leave', '/branches', '/requirements', '/payroll', '/messages', '/messages/new', '/data', '/audit', '/settings', '/users', '/profile', '/login']) {
     await page.goto(path)
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
     expect(overflow, `${path} overflows by ${overflow}px`).toBeLessThanOrEqual(1)
   }
+  // The menu becomes a drawer that closes with Escape; the account menu stays reachable.
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open menu' }).click()
+  await expect(page.locator('#sidebar').getByRole('link', { name: 'Employees' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('#sidebar')).toHaveAttribute('data-open', 'false')
+  await page.locator('#user-menu-button').click()
+  await expect(page.getByRole('menuitem', { name: 'Log out' })).toBeVisible()
   await ctx.close()
 })

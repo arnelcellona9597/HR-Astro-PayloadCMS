@@ -1,5 +1,6 @@
 ---
 import { readableOn, resolvePalette } from '@hr/shared/colors'
+import '@fontsource-variable/inter'
 import '../styles/global.css'
 
 interface Props {
@@ -32,7 +33,16 @@ const explicitTheme = theme === 'light' || theme === 'dark' ? theme : undefined
     {
       !explicitTheme && (
         <script is:inline>
-          document.documentElement.dataset.theme = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+          ;(function () {
+            var mq = matchMedia('(prefers-color-scheme: dark)')
+            document.documentElement.dataset.theme = mq.matches ? 'dark' : 'light'
+            // Follow the device live until the user picks a theme (which sets the hr-theme cookie).
+            mq.addEventListener('change', function (e) {
+              if (/(^|; )hr-theme=(light|dark)/.test(document.cookie)) return
+              document.documentElement.dataset.theme = e.matches ? 'dark' : 'light'
+              window.dispatchEvent(new CustomEvent('hr:theme'))
+            })
+          })()
         </script>
       )
     }

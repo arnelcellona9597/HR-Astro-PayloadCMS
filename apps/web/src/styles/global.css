@@ -17,32 +17,46 @@
   --brand-danger: #c8102e;
   --brand-on-primary: #ffffff;
 
+  /* Layered neutrals: page < surface-2 (wells, table heads) < surface (cards) */
   --bg: #f5f6f8;
   --surface: #ffffff;
-  --surface-2: #f0f2f5;
-  --border: #e2e5ea;
-  --fg: #111418;
-  --fg-2: #4b5260;
-  --muted: #6b7280;
+  --surface-2: #f4f5f7;
+  --surface-3: #eceef2;
+  --border: #e5e7eb;
+  --border-strong: #d3d7de;
+  --fg: #0f141c;
+  --fg-2: #454d5c;
+  --muted: #646d7d;
 
   --primary: var(--brand-primary);
   --primary-ink: var(--brand-primary);
-  --primary-soft: color-mix(in oklab, var(--brand-primary) 10%, var(--surface));
+  --primary-hover: color-mix(in oklab, var(--brand-primary) 86%, black);
+  --primary-soft: color-mix(in oklab, var(--brand-primary) 9%, var(--surface));
   --secondary: var(--brand-secondary);
   --accent: var(--brand-accent);
   --success: var(--brand-success);
-  --success-soft: color-mix(in oklab, var(--brand-success) 12%, var(--surface));
+  --success-soft: color-mix(in oklab, var(--brand-success) 11%, var(--surface));
   /* Warning colours are often light (e.g. yellow): darken them when used as text so they stay readable. */
   --warning: color-mix(in oklab, var(--brand-warning) 55%, black);
   --warning-soft: color-mix(in oklab, var(--brand-warning) 18%, var(--surface));
   --danger: var(--brand-danger);
-  --danger-soft: color-mix(in oklab, var(--brand-danger) 10%, var(--surface));
+  --danger-soft: color-mix(in oklab, var(--brand-danger) 9%, var(--surface));
+
+  /* Elevation: hairline-soft, never heavy */
+  --elev-1: 0 1px 2px rgb(15 20 28 / 0.04);
+  --elev-2: 0 1px 3px rgb(15 20 28 / 0.06), 0 4px 12px -2px rgb(15 20 28 / 0.05);
+  --elev-pop: 0 16px 40px -12px rgb(15 20 28 / 0.22), 0 4px 10px -4px rgb(15 20 28 / 0.08);
+
+  /* Shell dimensions */
+  --sidebar-w: 16rem;
+  --sidebar-w-collapsed: 4.5rem;
+  --topbar-h: 4rem;
 
   /* Chart tokens: validated categorical palette (independent of brand so it stays colorblind-safe) */
   --chart-surface: var(--surface);
-  --chart-grid: #e8e9ec;
-  --chart-axis: #c3c2b7;
-  --chart-ink: #4b5260;
+  --chart-grid: #eceef1;
+  --chart-axis: #d3d7de;
+  --chart-ink: #545c6b;
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-3: #1baf7a;
@@ -51,27 +65,34 @@
 
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --bg: #0f1115;
-  --surface: #181a1f;
-  --surface-2: #20232a;
-  --border: #2c3038;
-  --fg: #f3f4f6;
-  --fg-2: #c3c7cf;
-  --muted: #9aa0aa;
+  --bg: #0b0d11;
+  --surface: #12151a;
+  --surface-2: #181c22;
+  --surface-3: #20252d;
+  --border: #242932;
+  --border-strong: #323946;
+  --fg: #eef0f3;
+  --fg-2: #bcc2cd;
+  --muted: #8d95a3;
 
   /* Brand colors used as text/lines are lightened for the dark surface; fills keep the brand hue. */
-  --primary-ink: color-mix(in oklab, var(--brand-primary) 55%, white);
-  --primary-soft: color-mix(in oklab, var(--brand-primary) 22%, var(--surface));
+  --primary-ink: color-mix(in oklab, var(--brand-primary) 50%, white);
+  --primary-hover: color-mix(in oklab, var(--brand-primary) 85%, white);
+  --primary-soft: color-mix(in oklab, var(--brand-primary) 20%, var(--surface));
   --success: color-mix(in oklab, var(--brand-success) 60%, white);
-  --success-soft: color-mix(in oklab, var(--brand-success) 22%, var(--surface));
-  --warning: color-mix(in oklab, var(--brand-warning) 55%, white);
-  --warning-soft: color-mix(in oklab, var(--brand-warning) 22%, var(--surface));
-  --danger: color-mix(in oklab, var(--brand-danger) 55%, white);
-  --danger-soft: color-mix(in oklab, var(--brand-danger) 22%, var(--surface));
+  --success-soft: color-mix(in oklab, var(--brand-success) 20%, var(--surface));
+  --warning: color-mix(in oklab, var(--brand-warning) 70%, white);
+  --warning-soft: color-mix(in oklab, var(--brand-warning) 16%, var(--surface));
+  --danger: color-mix(in oklab, var(--brand-danger) 50%, white);
+  --danger-soft: color-mix(in oklab, var(--brand-danger) 20%, var(--surface));
 
-  --chart-grid: #2a2d33;
-  --chart-axis: #3a3e46;
-  --chart-ink: #c3c7cf;
+  --elev-1: 0 1px 2px rgb(0 0 0 / 0.3);
+  --elev-2: 0 1px 3px rgb(0 0 0 / 0.35), 0 6px 16px -4px rgb(0 0 0 / 0.35);
+  --elev-pop: 0 18px 44px -12px rgb(0 0 0 / 0.6), 0 0 0 1px var(--border-strong);
+
+  --chart-grid: #222730;
+  --chart-axis: #343b47;
+  --chart-ink: #b4bbc7;
   --series-1: #3987e5;
   --series-2: #d95926;
   --series-3: #199e70;
@@ -82,12 +103,15 @@
   --color-bg: var(--bg);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
   --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
   --color-fg: var(--fg);
   --color-fg-2: var(--fg-2);
   --color-muted: var(--muted);
   --color-primary: var(--primary);
   --color-primary-ink: var(--primary-ink);
+  --color-primary-hover: var(--primary-hover);
   --color-on-primary: var(--brand-on-primary);
   --color-primary-soft: var(--primary-soft);
   --color-secondary: var(--secondary);
@@ -98,7 +122,10 @@
   --color-warning-soft: var(--warning-soft);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
-  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --shadow-elev-1: var(--elev-1);
+  --shadow-elev-2: var(--elev-2);
+  --shadow-pop: var(--elev-pop);
+  --font-sans: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
 
 @layer base {
@@ -111,6 +138,13 @@
     background: var(--bg);
     color: var(--fg);
     font-family: var(--font-sans);
+    font-feature-settings: 'cv11', 'ss03';
+    text-rendering: optimizeLegibility;
+  }
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.011em;
   }
   :focus-visible {
     outline: 2px solid var(--primary-ink);
@@ -119,11 +153,14 @@
   [hidden] {
     display: none !important;
   }
+  ::selection {
+    background: color-mix(in oklab, var(--brand-primary) 22%, transparent);
+  }
 }
 
 /* Reusable building blocks (declared as utilities so other classes can @apply them). */
 @utility btn {
-  @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium whitespace-nowrap transition-[color,background-color,border-color,box-shadow,opacity] duration-150 disabled:cursor-not-allowed disabled:opacity-50;
 }
 @utility badge {
   @apply inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium;
@@ -131,13 +168,23 @@
 
 @layer components {
   .card {
-    @apply rounded-xl border border-line bg-surface;
+    @apply rounded-xl border border-line bg-surface shadow-elev-1;
+  }
+  /* Cards that are links: lift slightly on hover. */
+  .card-hover {
+    @apply transition-[border-color,box-shadow] duration-150 hover:border-line-strong hover:shadow-elev-2;
+  }
+  .section-title {
+    @apply text-base font-semibold tracking-tight text-fg;
+  }
+  .eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-[0.08em] text-muted;
   }
   .btn-primary {
-    @apply btn bg-primary text-on-primary hover:opacity-90;
+    @apply btn bg-primary text-on-primary shadow-elev-1 hover:bg-primary-hover;
   }
   .btn-secondary {
-    @apply btn border border-line bg-surface text-fg hover:bg-surface-2;
+    @apply btn border border-line bg-surface text-fg shadow-elev-1 hover:border-line-strong hover:bg-surface-2;
   }
   .btn-danger {
     @apply btn bg-danger-soft text-danger hover:opacity-90;
@@ -145,14 +192,17 @@
   .btn-ghost {
     @apply btn text-fg-2 hover:bg-surface-2 hover:text-fg;
   }
+  .btn-icon {
+    @apply btn size-9 p-0 text-fg-2 hover:bg-surface-2 hover:text-fg;
+  }
   .btn-sm {
     @apply px-2.5 py-1.5 text-xs;
   }
   .label {
-    @apply mb-1 block text-sm font-medium text-fg-2;
+    @apply mb-1.5 block text-sm font-medium text-fg-2;
   }
   .input {
-    @apply block w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg placeholder:text-muted focus:border-primary-ink focus:outline-none focus:ring-2 focus:ring-primary-soft disabled:opacity-60;
+    @apply block w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm text-fg shadow-elev-1 transition-[border-color,box-shadow] duration-150 placeholder:text-muted hover:border-line-strong focus:border-primary-ink focus:outline-none focus:ring-3 focus:ring-primary-soft disabled:opacity-60;
   }
   .input[aria-invalid='true'] {
     @apply border-danger;
@@ -167,16 +217,22 @@
     @apply w-full text-left text-sm;
   }
   .table th {
-    @apply whitespace-nowrap border-b border-line bg-surface-2 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-muted;
+    @apply whitespace-nowrap border-b border-line bg-surface-2 px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted;
   }
   .table td {
-    @apply border-b border-line px-3 py-2 align-top;
+    @apply border-b border-line px-3 py-2.5 align-top;
+  }
+  .table tbody tr {
+    @apply transition-colors duration-100;
   }
   .table tbody tr:hover {
     @apply bg-surface-2;
   }
+  .table tbody tr:last-child td {
+    border-bottom-color: transparent;
+  }
   .badge-neutral {
-    @apply badge bg-surface-2 text-fg-2;
+    @apply badge bg-surface-3 text-fg-2;
   }
   .badge-primary {
     @apply badge bg-primary-soft text-primary-ink;
@@ -192,5 +248,249 @@
   }
   .tabular {
     font-variant-numeric: tabular-nums;
+  }
+  .kbd {
+    @apply inline-flex h-5 min-w-5 items-center justify-center rounded border border-line bg-surface-2 px-1 font-sans text-[11px] font-medium text-muted;
+  }
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * App shell: sidebar (expanded / collapsed, left / right), sticky topbar (full / compact).
+ * State lives in data attributes on #shell, rendered server-side from cookies (no layout flash).
+ * --------------------------------------------------------------------------------------------- */
+#shell[data-header='compact'] {
+  --topbar-h: 3rem;
+}
+
+#sidebar {
+  position: fixed;
+  inset-block: 0;
+  left: 0;
+  z-index: 50;
+  width: min(18rem, 86vw);
+  transform: translateX(-100%);
+  visibility: hidden;
+  transition:
+    transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    visibility 0s linear 220ms;
+}
+#sidebar {
+  border-right: 1px solid var(--border);
+}
+#shell[data-side='right'] #sidebar {
+  left: auto;
+  right: 0;
+  transform: translateX(100%);
+  border-right: 0;
+  border-left: 1px solid var(--border);
+}
+#sidebar[data-open='true'] {
+  transform: translateX(0) !important;
+  visibility: visible;
+  transition:
+    transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    visibility 0s;
+}
+#sidebar-backdrop {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease;
+}
+#sidebar-backdrop[data-open='true'] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.nav-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  height: 2.25rem;
+  padding-inline: 0.75rem;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--fg-2);
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+.nav-link:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+.nav-link[aria-current='page'] {
+  background: var(--primary-soft);
+  color: var(--primary-ink);
+  font-weight: 600;
+}
+.nav-link[aria-current='page']::before {
+  content: '';
+  position: absolute;
+  inset-block: 0.5rem;
+  left: -0.75rem;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--primary);
+}
+#shell[data-side='right'] .nav-link[aria-current='page']::before {
+  left: auto;
+  right: -0.75rem;
+  border-radius: 3px 0 0 3px;
+}
+
+@media (min-width: 64rem) {
+  #shell {
+    display: flex;
+  }
+  #shell[data-side='right'] {
+    flex-direction: row-reverse;
+  }
+  #sidebar {
+    position: sticky;
+    top: 0;
+    height: 100dvh;
+    flex-shrink: 0;
+    width: var(--sidebar-w);
+    transform: none !important;
+    visibility: visible;
+    transition: width 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  #sidebar-backdrop {
+    display: none;
+  }
+  #shell[data-sidebar='collapsed'] #sidebar {
+    width: var(--sidebar-w-collapsed);
+  }
+  /* Collapsed: icons only; labels stay available to screen readers. */
+  #shell[data-sidebar='collapsed'] .sidebar-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+  #shell[data-sidebar='collapsed'] .nav-link,
+  #shell[data-sidebar='collapsed'] .side-row {
+    justify-content: center;
+    padding-inline: 0;
+  }
+  #shell[data-sidebar='collapsed'] .sidebar-brand > a {
+    flex: none;
+  }
+  #shell[data-sidebar='collapsed'] .sidebar-heading {
+    height: 1px;
+    margin-inline: 0.75rem;
+    background: var(--border);
+  }
+  #shell[data-sidebar='collapsed'] .sidebar-heading > * {
+    display: none;
+  }
+  #shell[data-sidebar='collapsed'] .sidebar-brand {
+    justify-content: center;
+    padding-inline: 0;
+  }
+  #shell[data-sidebar='collapsed'] .collapse-icon {
+    transform: rotate(180deg);
+  }
+  #shell[data-side='right'] .collapse-icon {
+    transform: rotate(180deg);
+  }
+  #shell[data-side='right'][data-sidebar='collapsed'] .collapse-icon {
+    transform: none;
+  }
+}
+
+#topbar {
+  height: var(--topbar-h);
+  transition: height 160ms ease;
+}
+#shell[data-header='compact'] .crumb-trail {
+  display: none;
+}
+
+/* Floating menus (user menu): fade + slight scale, closed state keeps [hidden]. */
+.menu-panel {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
+  transform-origin: top right;
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+.menu-panel[data-open='true'] {
+  opacity: 1;
+  transform: none;
+}
+.menu-item {
+  @apply flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm text-fg-2 transition-colors duration-100 outline-none hover:bg-surface-2 hover:text-fg focus-visible:bg-surface-2 focus-visible:text-fg focus-visible:outline-none;
+}
+
+.menu-item-danger,
+.menu-item-danger:hover,
+.menu-item-danger:focus-visible {
+  color: var(--danger);
+}
+.menu-item-danger:hover,
+.menu-item-danger:focus-visible {
+  background: var(--danger-soft);
+}
+/* Small on/off switch inside menuitemcheckbox rows, driven by aria-checked. */
+.pref-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 1.75rem;
+  height: 1rem;
+  border-radius: 999px;
+  background: var(--surface-3);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  transition: background-color 150ms ease;
+}
+.pref-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--elev-1);
+  transition: transform 150ms ease;
+}
+[aria-checked='true'] > .pref-switch {
+  background: var(--primary);
+  box-shadow: none;
+}
+[aria-checked='true'] > .pref-switch::after {
+  transform: translateX(0.75rem);
+}
+
+#nav-tip {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+#nav-tip[data-show='true'] {
+  opacity: 1;
+}
+
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

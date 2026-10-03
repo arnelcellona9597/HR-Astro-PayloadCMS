@@ -1,5 +1,13 @@
 import { expect, test, type Page } from '@playwright/test'
 import ExcelJS from 'exceljs'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+
+const OUTBOX = path.join(os.tmpdir(), `hr-e2e-${process.env.E2E_PORT || '4400'}`, 'outbox.jsonl')
+type Mail = { to: string; subject: string; text?: string; attachments: { filename?: string; contentBase64?: string }[] }
+const mails = (): Mail[] => (fs.existsSync(OUTBOX) ? fs.readFileSync(OUTBOX, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [])
+const codeFor = (email: string) => /(\d{6})/.exec(mails().filter((m) => m.to === email && /sign-in code|Confirm your email/.test(m.subject)).at(-1)?.subject ?? '')?.[1] ?? ''
 
 // One story, in order, against the production build with sample data (see scripts/e2e-server.mjs).
 test.describe.configure({ mode: 'serial' })
@@ -7,49 +15,109 @@ test.describe.configure({ mode: 'serial' })
 const ADMIN = { name: 'Ana Admin', email: 'admin@e2e.test', password: 'Adm1nPassword!' }
 const STAFF = { name: 'Sam Staff', email: 'staff@e2e.test', password: 'St4ffPassword!' }
 
-async function login(page: Page, who: { email: string; password: string }) {
+async function submitPassword(page: Page, who: { email: string; password: string }) {
   await page.goto('/login')
   await page.fill('#email', who.email)
   await page.fill('#password', who.password)
   await page.getByRole('button', { name: 'Sign in' }).click()
 }
 
-async function register(page: Page, who: typeof ADMIN) {
-  await page.goto('/register')
-  await page.fill('#name', who.name)
-  await page.fill('#email', who.email)
-  await page.fill('#password', who.password)
-  await page.fill('#confirm', who.password)
-  await page.locator('form button').click()
+/** Password, then the 6-digit code from the (captured) email. */
+async function login(page: Page, who: { email: string; password: string }) {
+  await submitPassword(page, who)
+  await page.waitForURL('**/login/verify')
+  await page.fill('#code', codeFor(who.email))
+  await page.waitForURL((u) => !u.pathname.startsWith('/login'))
 }
 
-test('first account becomes Super Admin and sees the dashboard', async ({ page }) => {
-  await register(page, ADMIN)
-  await login(page, ADMIN)
+test('the first System Admin (created with the server command) signs in with the emailed code', async ({ page }) => {
+  await page.goto('/register')
+  await expect(page.getByText('Accounts are created by a System Admin')).toBeVisible()
+  await submitPassword(page, ADMIN)
+  await page.waitForURL('**/login/verify')
+  await page.fill('#code', codeFor(ADMIN.email) === '000000' ? '111111' : '000000')
+  await expect(page.getByText(/not correct\. 4 attempts left/)).toBeVisible()
+  await page.fill('#code', codeFor(ADMIN.email))
+  await page.waitForURL((u) => !u.pathname.startsWith('/login'))
+  await expect(page.getByText(/Signed in until/)).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Employee statistics' })).toBeVisible()
-  await expect(page.getByText('Total employees')).toBeVisible()
   await expect(page.getByText('Male and female employees')).toBeVisible()
   await expect(page.locator('canvas[data-bar-chart]').first()).toBeVisible()
 })
 
-test('new sign-ups wait for approval and staff cannot manage users', async ({ page, browser }) => {
-  await register(page, STAFF)
-  await expect(page.getByText('A Super Admin must approve your account')).toBeVisible()
-  await login(page, STAFF)
-  await expect(page.getByText('waiting for approval')).toBeVisible()
-
+test('a System Admin invites HR Staff, who choose their own password; staff cannot manage accounts', async ({ page, browser }) => {
   const adminCtx = await browser.newContext()
   const admin = await adminCtx.newPage()
   await login(admin, ADMIN)
   await admin.goto('/users')
-  await admin.getByRole('button', { name: 'Approve as HR Staff' }).click()
-  await expect(admin.getByText('Sam Staff can now sign in.')).toBeVisible()
+  await admin.fill('#n-name', STAFF.name)
+  await admin.fill('#n-email', STAFF.email)
+  await admin.getByRole('button', { name: 'Create & send invitation' }).click()
+  await expect(admin.getByText(/Account created for Sam Staff/)).toBeVisible()
   await adminCtx.close()
+
+  const invite = mails().filter((m) => m.to === STAFF.email).at(-1)!
+  const link = /(https?:\/\/\S+\/set-password\?token=[a-f0-9]{64})/.exec(invite.text ?? '')![1]!
+  await page.goto(new URL(link).pathname + new URL(link).search)
+  await expect(page.getByText('Welcome — choose your password')).toBeVisible()
+  await page.fill('#password', STAFF.password)
+  await page.fill('#confirm', STAFF.password)
+  await page.getByRole('button', { name: 'Save password' }).click()
+  await expect(page.getByText('Password saved')).toBeVisible()
+  // The link works only once
+  await page.goto(new URL(link).pathname + new URL(link).search)
+  await expect(page.getByText(/invalid, was already used or has expired/)).toBeVisible()
 
   await login(page, STAFF)
   await expect(page.getByRole('heading', { name: 'Employee statistics' })).toBeVisible()
   await page.goto('/users')
   await expect(page.getByText("You don't have permission to open that page.")).toBeVisible()
+  await page.goto('/settings/email-server')
+  await expect(page.getByText("You don't have permission to open that page.")).toBeVisible()
+})
+
+test('security: encoded login URLs are blocked, headers are set, rate limits hold', async ({ page, request }) => {
+  for (const path of ['/api/users/logi%6E', '/api//users/login', '/API/users/login/', '/api/users/refresh-token']) {
+    const res = await request.post(path, { data: { email: ADMIN.email, password: ADMIN.password }, headers: { 'Content-Type': 'application/json' } })
+    expect(res.status(), path).toBe(403)
+  }
+  const signup = await request.post('/api/users', { data: { name: 'x', email: 'x@x.test', password: 'Passw0rd12345' } })
+  expect(signup.status()).toBe(403)
+
+  const res = await page.goto('/login')
+  const h = res!.headers()
+  expect(h['content-security-policy']).toContain("object-src 'none'")
+  expect(h['x-frame-options']).toBe('SAMEORIGIN')
+  expect(h['x-content-type-options']).toBe('nosniff')
+
+  // A spoofed (leftmost) X-Forwarded-For doesn't give a fresh rate-limit budget.
+  let limited = false
+  for (let i = 0; i < 25 && !limited; i++) {
+    const r = await request.post('/forgot-password', {
+      form: { email: `nobody${i}@x.test` },
+      headers: { 'X-Forwarded-For': `10.9.${i}.1, 198.51.100.7`, Origin: new URL(page.url()).origin },
+    })
+    limited = r.status() === 429
+  }
+  expect(limited).toBe(true)
+})
+
+test('System Admin saves SMTP settings in the app; the password is never shown again', async ({ page }) => {
+  await login(page, ADMIN)
+  const errors: string[] = []
+  page.on('console', (m) => m.type() === 'error' && /Content Security Policy|Refused/.test(m.text()) && errors.push(m.text()))
+  await page.goto('/settings/email-server')
+  await page.fill('#host', 'mail.example.test')
+  await page.fill('#port', '465')
+  await page.fill('#username', 'info@example.test')
+  await page.fill('#password', 'not-a-real-password')
+  await page.fill('#fromAddress', 'info@example.test')
+  await page.getByRole('button', { name: 'Save and test connection' }).click()
+  await expect(page.getByText(/Saved/).first()).toBeVisible()
+  await expect(page.getByText('saved (encrypted)')).toBeVisible()
+  expect(await page.content()).not.toContain('not-a-real-password')
+  for (const p of ['/', '/employees', '/payroll', '/messages/new', '/leave']) await page.goto(p)
+  expect(errors).toEqual([])
 })
 
 test('employee form validates, saves, and advanced search finds the record', async ({ page }) => {
@@ -151,11 +219,78 @@ test('Excel round trip: export, edit one cell, preview, confirm', async ({ page 
   await expect(page.getByText('Imported Title')).toBeVisible()
 })
 
+test('payroll: generate, enter amounts, print, release with PDF payslips', async ({ page }) => {
+  await login(page, ADMIN)
+  await page.goto('/payroll/new')
+  await page.fill('#f-name', 'E2E Payroll')
+  await page.fill('#f-code', 'E2E-1')
+  await page.fill('#f-periodStart', '2026-09-01')
+  await page.fill('#f-periodEnd', '2026-09-15')
+  await page.fill('#f-payDate', '2026-09-20')
+  await page.getByRole('button', { name: 'Create period' }).click()
+  await page.waitForURL(/\/payroll\/\d+$/)
+  const periodUrl = page.url()
+  await page.getByRole('button', { name: 'Generate' }).click()
+  await expect(page.getByText(/payslip\(s\) created/)).toBeVisible()
+
+  // Give every payslip an amount so the period can be released; check one row's totals.
+  const rows = page.locator('tr[data-row]')
+  const count = await rows.count()
+  expect(count).toBeGreaterThan(50)
+  for (let i = 0; i < count; i++) await rows.nth(i).locator('input[data-kind="e"]').first().fill('20000')
+  const first = rows.first()
+  await first.locator('input[data-kind="e"]').nth(1).fill('1,000.50')
+  await first.locator('input[data-kind="d"]').first().fill('1500.25')
+  await expect(first.locator('[data-net]')).toHaveText('₱19,500.25')
+  await page.getByRole('button', { name: 'Save all payslips' }).click()
+  await expect(page.getByText(`Saved ${count} payslip(s).`)).toBeVisible()
+
+  const slipHref = await page.locator('tr[data-row] a[href^="/payroll/payslips/"]').first().getAttribute('href')
+  await page.goto(`${slipHref}/print`)
+  await expect(page.getByText('NET PAY')).toBeVisible()
+  await expect(page.getByText('₱19,500.25')).toBeVisible()
+  const pdf = await page.request.get(`${slipHref}/pdf`)
+  expect(pdf.headers()['content-type']).toBe('application/pdf')
+
+  await page.goto(periodUrl)
+  page.once('dialog', (d) => d.accept())
+  await page.getByRole('button', { name: 'Release payroll' }).click()
+  await expect(page.getByText(/E2E Payroll released/)).toBeVisible()
+  await expect.poll(() => mails().filter((m) => m.subject === 'Your payslip for E2E Payroll').length, { timeout: 30_000 }).toBeGreaterThan(5)
+  const mail = mails().find((m) => m.subject === 'Your payslip for E2E Payroll')!
+  expect(mail.attachments[0]?.filename).toMatch(/^payslip-E2E-1-.*\.pdf$/)
+})
+
+test('messages: send an announcement to a branch group', async ({ page }) => {
+  await login(page, ADMIN)
+  // The payroll release above used up the default 100-per-hour budget; raise it in Email Settings.
+  await page.goto('/settings/notifications')
+  await page.fill('#hourlyLimit', '1000')
+  await page.getByRole('button', { name: 'Save settings' }).click()
+  await expect(page.getByText('Email settings saved.')).toBeVisible()
+  await page.goto('/messages/new')
+  await page.selectOption('#groupBranch', { index: 0 })
+  await page.check('input[name="groupStatus"][value="Active"]')
+  await page.fill('#subject', 'Office closed on Friday')
+  await page.fill('#body', 'Hi {{firstName}},\n\nThe {{station}} office is closed on Friday.')
+  await page.getByRole('button', { name: 'Preview' }).click()
+  await expect(page.locator('#preview-summary')).toContainText('recipient(s) will get this email')
+  page.once('dialog', (d) => d.accept())
+  await page.getByRole('button', { name: 'Send' }).click()
+  await expect(page.getByText(/Message queued for \d+ recipient/)).toBeVisible()
+  await expect.poll(() => mails().filter((m) => m.subject === 'Office closed on Friday').length, { timeout: 30_000 }).toBeGreaterThan(0)
+  await page.reload()
+  await expect(page.locator('main').getByText(/Delivered/)).toBeVisible()
+  const mail = mails().find((m) => m.subject === 'Office closed on Friday')!
+  expect(mail.text).toMatch(/^Office closed on Friday\n\nHi \w+/)
+  expect(mail.text).not.toContain('{{')
+})
+
 test('pages fit a phone screen without sideways scrolling', async ({ browser }) => {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } })
   const page = await ctx.newPage()
   await login(page, ADMIN)
-  for (const path of ['/', '/employees', '/leave', '/branches', '/requirements', '/data', '/login']) {
+  for (const path of ['/', '/employees', '/leave', '/branches', '/requirements', '/payroll', '/messages', '/messages/new', '/data', '/login']) {
     await page.goto(path)
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
     expect(overflow, `${path} overflows by ${overflow}px`).toBeLessThanOrEqual(1)

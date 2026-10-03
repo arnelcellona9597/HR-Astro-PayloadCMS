@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "concurrently -k -n cms,web -c blue,magenta \"pnpm --filter @hr/cms dev\" \"pnpm --filter @hr/web dev\"",
-    "build": "pnpm --filter @hr/cms build && pnpm --filter @hr/web build",
+    "build": "pnpm --filter @hr/cms build && pnpm --filter @hr/cms build:cli && pnpm --filter @hr/web build",
     "start": "node server.mjs",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
@@ -17,7 +17,8 @@
     "seed": "pnpm --filter @hr/cms seed",
     "backup": "node scripts/backup.mjs",
     "test:e2e": "playwright test",
-    "release": "node scripts/package-release.mjs"
+    "release": "node scripts/package-release.mjs",
+    "create-admin": "pnpm --filter @hr/cms create-admin"
   },
   "dependencies": {
     "dotenv": "16.4.7"

@@ -19,10 +19,13 @@ const copy = (from, to = from) => fs.cpSync(path.join(root, from), path.join(out
 
 copy('server.mjs')
 copy('passenger.cjs')
+copy('server-security.mjs')
 copy('scripts/backup.mjs')
 copy('scripts/check-host.sh')
+fs.cpSync(path.join(root, 'apps/cms/dist-cli/create-admin.mjs'), path.join(out, 'scripts/create-admin.mjs'))
 copy('apps/cms/.next')
 copy('apps/cms/next.config.mjs')
+copy('apps/cms/assets')
 copy('apps/cms/package.json')
 copy('apps/web/dist')
 copy('.env.example')

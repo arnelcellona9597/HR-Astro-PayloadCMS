@@ -13,17 +13,15 @@ interface Props {
   back?: { href: string; label: string }
 }
 const { title, heading = title, description, back } = Astro.props
-const { user, settings, payload } = Astro.locals
+const { user, settings, payload, sessionExpiresAt, unreadNotifications = 0, mailWarning } = Astro.locals
+const sessionEnds = sessionExpiresAt
+  ? new Date(sessionExpiresAt).toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit' })
+  : null
 const role = user?.role
-const isAdmin = role === 'super-admin' || role === 'hr-admin'
+const isSystemAdmin = role === 'system-admin'
 const flash = takeFlash(Astro.cookies)
 const denied = Astro.url.searchParams.get('denied') === '1'
 
-let pendingUsers = 0
-if (role === 'super-admin') {
-  pendingUsers = (await payload.count({ collection: 'users', where: { status: { equals: 'pending' } }, overrideAccess: true }))
-    .totalDocs
-}
 
 type NavItem = { href: string; label: string; icon: string; show?: boolean; badge?: number }
 const main: NavItem[] = [
@@ -33,16 +31,21 @@ const main: NavItem[] = [
   { href: '/leave', label: 'Wellness Leave', icon: 'calendar' },
   { href: '/branches', label: 'Branches', icon: 'building' },
   { href: '/requirements', label: 'Annual Requirements', icon: 'file' },
+  { href: '/payroll', label: 'Payroll', icon: 'wallet' },
+  { href: '/messages', label: 'Messages', icon: 'mail' },
   { href: '/data', label: 'Import / Export', icon: 'sheet' },
 ]
 const admin: NavItem[] = [
-  { href: '/users', label: 'HR Users', icon: 'shield', show: role === 'super-admin', badge: pendingUsers },
-  { href: '/settings', label: 'Branding & Theme', icon: 'settings', show: role === 'super-admin' },
-  { href: '/audit', label: 'Audit Log', icon: 'history', show: isAdmin },
+  { href: '/users', label: 'HR Accounts', icon: 'shield', show: isSystemAdmin },
+  { href: '/settings', label: 'Branding & Theme', icon: 'settings', show: true },
+  { href: '/settings/notifications', label: 'Email Settings', icon: 'send', show: true },
+  { href: '/settings/email-server', label: 'Email Server (SMTP)', icon: 'mail', show: isSystemAdmin },
+  { href: '/audit', label: 'Audit Log', icon: 'history', show: true },
 ].filter((i) => i.show)
 
 const path = Astro.url.pathname
-const isActive = (href: string) => (href === '/' ? path === '/' : path === href || path.startsWith(`${href}/`))
+const isActive = (href: string) =>
+  href === '/' ? path === '/' : href === '/settings' ? path === '/settings' : path === href || path.startsWith(`${href}/`)
 const logo = settings?.logo && typeof settings.logo === 'object' ? settings.logo : null
 const company = settings?.companyName ?? 'HR Management System'
 ---
@@ -109,7 +112,7 @@ const company = settings?.companyName ?? 'HR Management System'
                     </a>
                   </li>
                 ))}
-                {isAdmin && (
+                {role && (
                   <li>
                     <a
                       href="/admin"
@@ -126,6 +129,11 @@ const company = settings?.companyName ?? 'HR Management System'
         }
       </nav>
       <div class="border-t border-line p-3">
+        <a href="/notifications" class="mb-1 flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-fg-2 hover:bg-surface-2 hover:text-fg" aria-label={`Notifications${unreadNotifications ? ` (${unreadNotifications} unread)` : ''}`}>
+          <Icon name="bell" class="size-4" />
+          <span class="flex-1">Notifications</span>
+          {unreadNotifications > 0 && <span class="badge-primary">{unreadNotifications}</span>}
+        </a>
         <a href="/profile" class="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-surface-2">
           <span class="flex size-8 items-center justify-center rounded-full bg-surface-2 text-xs font-semibold text-fg-2">
             {(user?.name ?? '?').split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase()}
@@ -135,6 +143,11 @@ const company = settings?.companyName ?? 'HR Management System'
             <span class="block truncate text-xs text-muted">{role ? ROLE_LABELS[role] : ''}</span>
           </span>
         </a>
+        {sessionEnds && (
+          <p class="mt-1 flex items-center gap-1.5 px-2 text-xs text-muted" data-session-expires={sessionExpiresAt} title="Sessions last 12 hours">
+            <Icon name="clock" class="size-3.5" /> Signed in until {sessionEnds}
+          </p>
+        )}
         <div class="mt-2 flex gap-2">
           <button type="button" class="btn-secondary btn-sm flex-1" data-theme-toggle>
             <Icon name="moon" class="size-3.5 dark:hidden" />
@@ -174,6 +187,14 @@ const company = settings?.companyName ?? 'HR Management System'
           <div class="flex flex-wrap items-center gap-2"><slot name="actions" /></div>
         </div>
 
+        {
+          mailWarning && (
+            <div class="mb-4 flex items-start gap-2 rounded-lg border border-danger bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">
+              <Icon name="alert" class="mt-0.5 size-4 shrink-0" />
+              <span>{mailWarning} {isSystemAdmin && <a class="font-medium underline" href="/settings/email-server">Open email server settings</a>}</span>
+            </div>
+          )
+        }
         {
           denied && (
             <div class="mb-4 flex items-start gap-2 rounded-lg border border-line bg-warning-soft px-4 py-3 text-sm text-warning" role="alert">
@@ -218,6 +239,17 @@ const company = settings?.companyName ?? 'HR Management System'
       document.cookie = `hr-theme=${next}; path=/; max-age=31536000; samesite=lax`
       window.dispatchEvent(new CustomEvent('hr:theme'))
     })
+
+    // Sessions end 12 hours after sign-in: send the user to the sign-in page when that happens.
+    const expiresEl = document.querySelector<HTMLElement>('[data-session-expires]')
+    if (expiresEl) {
+      const expires = Number(expiresEl.dataset.sessionExpires)
+      const check = () => {
+        if (Date.now() >= expires) location.href = '/login?notice=expired'
+      }
+      setInterval(check, 30_000)
+      document.addEventListener('visibilitychange', check)
+    }
 
     // Warn before leaving a form with unsaved changes.
     document.querySelectorAll<HTMLFormElement>('form[data-dirty-guard]').forEach((form) => {

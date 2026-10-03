@@ -1,6 +1,6 @@
 import type { CollectionConfig } from 'payload'
 
-import { isHrAdmin, nobody } from '../access'
+import { isStaff, nobody } from '../access'
 
 /** History of Excel imports: who imported what, and the outcome. Written by the import service only. */
 export const ImportJobs: CollectionConfig = {
@@ -11,7 +11,7 @@ export const ImportJobs: CollectionConfig = {
     useAsTitle: 'fileName',
     defaultColumns: ['createdAt', 'fileName', 'module', 'status', 'userName'],
   },
-  access: { read: isHrAdmin, create: nobody, update: nobody, delete: nobody },
+  access: { read: isStaff, create: nobody, update: nobody, delete: nobody },
   fields: [
     { name: 'fileName', type: 'text', required: true },
     { name: 'module', type: 'text', required: true },

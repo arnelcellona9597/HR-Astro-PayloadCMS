@@ -12,18 +12,19 @@ export function hasRole(user: MaybeUser, ...roles: Role[]): boolean {
   return isApproved(user) && roles.includes((user as { role?: Role }).role as Role)
 }
 
+/** Any approved HR user (System Admin or HR Staff). HR Staff can do everything except manage HR accounts. */
 export const isStaff: Access = ({ req }) => isApproved(req.user)
-export const isHrAdmin: Access = ({ req }) => hasRole(req.user, 'super-admin', 'hr-admin')
-export const isSuperAdmin: Access = ({ req }) => hasRole(req.user, 'super-admin')
+/** Only System Admins: managing HR accounts. */
+export const isSystemAdmin: Access = ({ req }) => hasRole(req.user, 'system-admin')
 export const nobody: Access = () => false
 export const anyone: Access = () => true
 
-export const superAdminField: FieldAccess = ({ req }) => hasRole(req.user, 'super-admin')
+export const systemAdminField: FieldAccess = ({ req }) => hasRole(req.user, 'system-admin')
 
-/** Standard access for HR records: staff can view/add/edit, only HR admins can delete. */
+/** Standard access for HR records: every approved HR user can view, add, edit and delete. */
 export const hrRecordAccess = {
   read: isStaff,
   create: isStaff,
   update: isStaff,
-  delete: isHrAdmin,
+  delete: isStaff,
 }

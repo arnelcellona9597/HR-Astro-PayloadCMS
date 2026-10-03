@@ -9,6 +9,8 @@ import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { clientIp, normalizePath } from './server-security.mjs'
+
 const root = path.dirname(fileURLToPath(import.meta.url))
 dotenv.config({ path: path.join(root, '.env'), quiet: true })
 
@@ -22,23 +24,18 @@ const NEXT_PREFIXES = ['/admin', '/api', '/_next']
 // Basic brute-force protection for authentication endpoints (per client IP, in memory).
 const AUTH_PATHS = new Set([
   '/login',
-  '/register',
+  '/login/verify',
   '/forgot-password',
-  '/reset-password',
-  '/api/users/login',
-  '/api/users/forgot-password',
-  '/api/users/reset-password',
-  '/api/users/first-register',
+  '/set-password',
+  '/profile',
+  '/users',
   '/api/users',
+  '/api/users/forgot-password',
 ])
 const WINDOW_MS = 15 * 60 * 1000
 const MAX_ATTEMPTS = 20
+const MAX_TRACKED = 10_000
 const attempts = new Map()
-
-function clientIp(req) {
-  const fwd = req.headers['x-forwarded-for']
-  return (typeof fwd === 'string' && fwd.split(',')[0].trim()) || req.socket.remoteAddress || 'unknown'
-}
 
 function rateLimited(req, pathname) {
   if (req.method !== 'POST' || !AUTH_PATHS.has(pathname)) return false
@@ -46,6 +43,8 @@ function rateLimited(req, pathname) {
   const key = `${clientIp(req)}|${pathname}`
   const entry = attempts.get(key)
   if (!entry || now - entry.start > WINDOW_MS) {
+    // Bounded memory: drop the oldest entries when too many addresses are tracked.
+    if (attempts.size >= MAX_TRACKED) attempts.delete(attempts.keys().next().value)
     attempts.set(key, { start: now, count: 1 })
     return false
   }
@@ -59,6 +58,40 @@ setInterval(() => {
 }, WINDOW_MS).unref()
 
 // ---------------------------------------------------------------------------------------------
+
+// Sign-in must go through the app's email-code (2FA) flow, and sessions must end 12 hours after
+// sign-in. These Payload endpoints would bypass that, so they are closed.
+const BLOCKED_API = [
+  '/api/users/login',
+  '/api/users/refresh-token',
+  '/api/users/first-register',
+  '/api/users/reset-password',
+  '/api/users/forgot-password',
+  '/api/users/unlock',
+  '/api/users/verify',
+]
+
+const HTTPS = (process.env.SERVER_URL ?? '').startsWith('https://')
+// App pages: only our own scripts/styles/images; no plugins, no foreign forms, no <base> hijacking.
+// (Inline scripts/styles are needed by the theme loader and charts; output is escaped by Astro.)
+const APP_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "frame-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'self'",
+].join('; ')
+const ADMIN_REDIRECTS = {
+  '/admin/login': '/login?next=/admin',
+  '/admin/create-first-user': '/register',
+  '/admin/forgot': '/forgot-password',
+}
 
 function isNextPath(pathname) {
   return NEXT_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`))
@@ -74,16 +107,41 @@ async function main() {
   const { handler: astroHandler } = await import(astroEntry)
 
   const server = http.createServer((req, res) => {
-    const pathname = (req.url || '/').split('?')[0]
+    const rawPath = (req.url || '/').split('?')[0]
+    const pathname = normalizePath(rawPath)
+    if (pathname === null) {
+      res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' })
+      res.end('Bad request.')
+      return
+    }
 
     res.setHeader('X-Content-Type-Options', 'nosniff')
     res.setHeader('Referrer-Policy', 'same-origin')
     res.setHeader('X-Frame-Options', 'SAMEORIGIN')
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
+    if (HTTPS) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
 
     if (rateLimited(req, pathname)) {
       res.writeHead(429, { 'Content-Type': 'text/plain; charset=utf-8', 'Retry-After': '900' })
       res.end('Too many attempts. Please wait 15 minutes and try again.')
+      return
+    }
+
+    if (BLOCKED_API.some((p) => pathname === p || pathname.startsWith(`${p}/`))) {
+      res.writeHead(403, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ errors: [{ message: 'Sign in at /login (email verification required).' }] }))
+      return
+    }
+    const redirect = ADMIN_REDIRECTS[pathname]
+    if (redirect) {
+      res.writeHead(302, { Location: redirect })
+      res.end()
+      return
+    }
+    if (pathname.startsWith('/admin/reset/')) {
+      res.writeHead(302, { Location: '/forgot-password' })
+      res.end()
       return
     }
 
@@ -95,6 +153,7 @@ async function main() {
       })
       return
     }
+    res.setHeader('Content-Security-Policy', APP_CSP)
     astroHandler(req, res)
   })
 

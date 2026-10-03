@@ -22,6 +22,12 @@ function cleanup() {
   }
 }
 
+export function discardPending(token: string) {
+  if (!/^[a-f0-9]{32}$/.test(token)) return
+  fs.rmSync(path.join(DIR, `pending-${token}.xlsx`), { force: true })
+  fs.rmSync(path.join(DIR, `pending-${token}.json`), { force: true })
+}
+
 export async function stagePendingImport(buffer: Buffer, meta: Omit<Meta, 'createdAt'>): Promise<string> {
   fs.mkdirSync(DIR, { recursive: true })
   cleanup()
@@ -31,7 +37,8 @@ export async function stagePendingImport(buffer: Buffer, meta: Omit<Meta, 'creat
   return token
 }
 
-function readPending(token: string, userId: number): { buffer: Buffer; meta: Meta } | null {
+/** A staged upload, only for the user who uploaded it and within the hour. */
+export function readPending(token: string, userId: number): { buffer: Buffer; meta: Meta } | null {
   if (!/^[a-f0-9]{32}$/.test(token)) return null
   const file = path.join(DIR, `pending-${token}.xlsx`)
   const metaFile = path.join(DIR, `pending-${token}.json`)
@@ -47,6 +54,31 @@ export async function previewPendingImport(payload: Payload, user: User, token: 
   return { plan: await validateImport(payload, user, pending.buffer, { moduleHint: pending.meta.moduleHint }), meta: pending.meta }
 }
 
+/**
+ * Takes exclusive ownership of a staged upload (atomic rename), so two simultaneous "Confirm"
+ * clicks can't both import it. Call `release` to put it back if the import doesn't go ahead.
+ */
+export function claimPending(token: string, userId: number) {
+  const pending = readPending(token, userId)
+  if (!pending) return null
+  const from = path.join(DIR, `pending-${token}.xlsx`)
+  const claimed = path.join(DIR, `committing-${token}.xlsx`)
+  try {
+    fs.renameSync(from, claimed)
+  } catch {
+    return null // someone else claimed it first
+  }
+  return {
+    ...pending,
+    release: () => fs.existsSync(claimed) && fs.renameSync(claimed, from),
+    finish: (archiveName?: string) => {
+      if (archiveName) fs.renameSync(claimed, path.join(DIR, archiveName))
+      else fs.rmSync(claimed, { force: true })
+      fs.rmSync(path.join(DIR, `pending-${token}.json`), { force: true })
+    },
+  }
+}
+
 export type CommitOutcome =
   | { ok: true; created: number; updated: number; unchanged: number; fileName: string }
   | { ok: false; reason: string; plan?: ImportPlan }
@@ -56,18 +88,25 @@ export type CommitOutcome =
  * and commits it in a single transaction. The workbook is archived with the import history.
  */
 export async function commitPendingImport(payload: Payload, user: User, token: string): Promise<CommitOutcome> {
-  const pending = readPending(token, user.id)
+  const pending = claimPending(token, user.id)
   if (!pending) return { ok: false, reason: 'This upload has expired or was already imported. Upload the file again.' }
-  const plan = await validateImport(payload, user, pending.buffer, { moduleHint: pending.meta.moduleHint })
-  if (plan.errors.length) return { ok: false, reason: 'The data changed since the preview and the file no longer passes all checks.', plan }
-
-  const res = await commit(payload, user, plan)
+  let plan: ImportPlan
+  let res: Awaited<ReturnType<typeof commit>>
+  try {
+    plan = await validateImport(payload, user, pending.buffer, { moduleHint: pending.meta.moduleHint })
+    if (plan.errors.length) {
+      pending.release()
+      return { ok: false, reason: 'The data changed since the preview and the file no longer passes all checks.', plan }
+    }
+    res = await commit(payload, user, plan)
+  } catch (err) {
+    pending.release()
+    throw err
+  }
   const archive = `import-${new Date().toISOString().replace(/[:.]/g, '-')}-${token.slice(0, 8)}.xlsx`
   const modules = plan.sheets.map((s) => s.title).join(', ')
-  if (res.ok) {
-    fs.renameSync(path.join(DIR, `pending-${token}.xlsx`), path.join(DIR, archive))
-    fs.rmSync(path.join(DIR, `pending-${token}.json`), { force: true })
-  }
+  if (res.ok) pending.finish(archive)
+  else pending.release()
   await payload.create({
     collection: 'import-jobs',
     data: {

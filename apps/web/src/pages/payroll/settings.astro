@@ -1,0 +1,142 @@
+---
+import type { Payslip as PayslipDoc } from '@hr/cms/types'
+
+import Payslip from '../../components/payroll/Payslip.astro'
+import App from '../../layouts/App.astro'
+import { errorMessage, UserError } from '../../lib/errors'
+import { setFlash } from '../../lib/flash'
+
+const { payload, user, settings: site } = Astro.locals
+const SHOW = [
+  ['employeeId', 'Employee ID'],
+  ['position', 'Position'],
+  ['station', 'Station'],
+  ['classification', 'Classification'],
+  ['tin', 'TIN'],
+  ['sss', 'SSS'],
+  ['philhealth', 'PhilHealth'],
+  ['pagibig', 'Pag-IBIG'],
+] as const
+let error = ''
+
+if (Astro.request.method === 'POST') {
+  const fd = await Astro.request.formData()
+  const lines = (k: string) =>
+    String(fd.get(k) ?? '')
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+  try {
+    const earningItems = lines('earningItems').map((label) => ({ label }))
+    const deductionItems = lines('deductionItems').map((label) => ({ label }))
+    if (!earningItems.length || !deductionItems.length) throw new UserError('List at least one earning item and one deduction item.')
+    await payload.updateGlobal({
+      slug: 'payslip-settings',
+      data: {
+        title: String(fd.get('title') ?? '').trim() || 'PAYSLIP',
+        companyName: String(fd.get('companyName') ?? '').trim() || null,
+        addressLines: String(fd.get('addressLines') ?? ''),
+        showLogo: fd.get('showLogo') === 'on',
+        currencySymbol: String(fd.get('currencySymbol') ?? '₱').trim() || '₱',
+        earningItems,
+        deductionItems,
+        show: Object.fromEntries(SHOW.map(([k]) => [k, fd.get(`show_${k}`) === 'on'])),
+        preparedByName: String(fd.get('preparedByName') ?? '').trim() || null,
+        preparedByTitle: String(fd.get('preparedByTitle') ?? '').trim() || null,
+        certifiedByName: String(fd.get('certifiedByName') ?? '').trim() || null,
+        certifiedByTitle: String(fd.get('certifiedByTitle') ?? '').trim() || null,
+        footerNote: String(fd.get('footerNote') ?? ''),
+        paperSize: String(fd.get('paperSize') ?? 'A4') as never,
+      },
+      user,
+      overrideAccess: false,
+    })
+    setFlash(Astro.cookies, { type: 'success', message: 'Payslip template saved. New prints and PDFs use it right away.' })
+    return Astro.redirect('/payroll/settings')
+  } catch (err) {
+    error = errorMessage(err)
+    Astro.response.status = 400
+  }
+}
+
+const s = await payload.findGlobal({ slug: 'payslip-settings', user, overrideAccess: false })
+// Preview with a real payslip if there is one, otherwise sample data.
+const real = (await payload.find({ collection: 'payslips', sort: '-updatedAt', limit: 1, depth: 1, user, overrideAccess: false })).docs[0]
+const sample = (real ?? {
+  id: 0,
+  fullName: 'Dela Cruz, Juan P.',
+  employeeCode: 'EMP-0001',
+  position: 'Administrative Officer II',
+  station: 'Main Office',
+  classification: 'Regular',
+  tin: '123-456-789-000',
+  sss: '34-1234567-8',
+  philhealth: '01-000000000-1',
+  pagibig: '1210-0000-0001',
+  earnings: [{ label: 'Basic Pay', amount: 25000 }, { label: 'PERA', amount: 2000 }],
+  deductions: [{ label: 'Withholding Tax', amount: 1500 }, { label: 'PhilHealth', amount: 625 }],
+  grossPay: 27000,
+  totalDeductions: 2125,
+  netPay: 24875,
+}) as PayslipDoc
+const period = real && typeof real.period === 'object' ? real.period : { name: 'October 2026 — 1st half', periodStart: '2026-10-01', periodEnd: '2026-10-15', payDate: '2026-10-20' }
+const logo = site.logo && typeof site.logo === 'object' ? `/files/${site.logo.id}` : null
+---
+<App title="Payslip template" heading="Payslip template" description="What printed and emailed payslips show, and which pay items HR fills in." back={{ href: '/payroll', label: 'Payroll' }}>
+  {error && <div class="mb-4 rounded-lg bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{error}</div>}
+  <div class="grid gap-6 2xl:grid-cols-2">
+    <form method="post" class="space-y-6" data-dirty-guard>
+      <fieldset class="card grid gap-4 p-5 sm:grid-cols-2">
+        <legend class="px-1 text-sm font-semibold">Header</legend>
+        <div><label class="label" for="title">Title</label><input class="input" id="title" name="title" value={s.title} /></div>
+        <div><label class="label" for="companyName">Company name</label><input class="input" id="companyName" name="companyName" value={s.companyName ?? ''} placeholder={site.companyName} /></div>
+        <div class="sm:col-span-2"><label class="label" for="addressLines">Address / extra header lines (one per line)</label><textarea class="input min-h-20" id="addressLines" name="addressLines">{s.addressLines}</textarea></div>
+        <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="showLogo" checked={s.showLogo !== false} class="size-4" /> Show the logo (PNG/JPG from Branding)</label>
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="label" for="currencySymbol">Currency</label><input class="input" id="currencySymbol" name="currencySymbol" value={s.currencySymbol ?? '₱'} maxlength="5" /></div>
+          <div>
+            <label class="label" for="paperSize">Paper</label>
+            <select class="input" id="paperSize" name="paperSize">{['A4', 'Letter', 'Half-Letter'].map((p) => <option selected={p === s.paperSize}>{p}</option>)}</select>
+          </div>
+        </div>
+      </fieldset>
+      <fieldset class="card grid gap-4 p-5 sm:grid-cols-2">
+        <legend class="px-1 text-sm font-semibold">Pay items</legend>
+        <div>
+          <label class="label" for="earningItems">Earnings (one per line)</label>
+          <textarea class="input min-h-36" id="earningItems" name="earningItems">{(s.earningItems ?? []).map((i) => i.label).join('\n')}</textarea>
+        </div>
+        <div>
+          <label class="label" for="deductionItems">Deductions (one per line)</label>
+          <textarea class="input min-h-36" id="deductionItems" name="deductionItems">{(s.deductionItems ?? []).map((i) => i.label).join('\n')}</textarea>
+        </div>
+        <p class="field-help sm:col-span-2">These are the columns of the payroll grid and Excel sheet. Renaming an item doesn't change saved payslips; their old item stays on them as an extra line.</p>
+      </fieldset>
+      <fieldset class="card p-5">
+        <legend class="px-1 text-sm font-semibold">Employee details shown</legend>
+        <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {SHOW.map(([k, label]) => <label class="flex items-center gap-2 text-sm"><input type="checkbox" name={`show_${k}`} checked={(s.show as Record<string, boolean> | undefined)?.[k] ?? ['employeeId', 'position', 'station', 'classification'].includes(k)} class="size-4" /> {label}</label>)}
+        </div>
+      </fieldset>
+      <fieldset class="card grid gap-4 p-5 sm:grid-cols-2">
+        <legend class="px-1 text-sm font-semibold">Signatories & footer</legend>
+        <div><label class="label" for="preparedByName">Prepared by</label><input class="input" id="preparedByName" name="preparedByName" value={s.preparedByName ?? ''} /></div>
+        <div><label class="label" for="preparedByTitle">Position</label><input class="input" id="preparedByTitle" name="preparedByTitle" value={s.preparedByTitle ?? ''} /></div>
+        <div><label class="label" for="certifiedByName">Certified correct by</label><input class="input" id="certifiedByName" name="certifiedByName" value={s.certifiedByName ?? ''} /></div>
+        <div><label class="label" for="certifiedByTitle">Position</label><input class="input" id="certifiedByTitle" name="certifiedByTitle" value={s.certifiedByTitle ?? ''} /></div>
+        <div class="sm:col-span-2"><label class="label" for="footerNote">Footer note</label><textarea class="input" id="footerNote" name="footerNote">{s.footerNote}</textarea></div>
+      </fieldset>
+      <div class="flex flex-wrap items-center gap-3">
+        <button class="btn-primary">Save template</button>
+        <p class="text-sm text-muted">The payslip email text is the “Payroll released (payslip)” template under <a class="text-primary-ink hover:underline" href="/settings/notifications">Email settings</a>.</p>
+      </div>
+    </form>
+    <section>
+      <p class="mb-2 text-sm font-semibold">Preview {real ? `(${real.fullName})` : '(sample data)'}</p>
+      <div class="overflow-x-auto rounded-xl bg-surface-2 p-4">
+        <Payslip settings={s} companyName={s.companyName || site.companyName} logoUrl={logo} period={period} slip={sample} />
+      </div>
+      {real && <a class="mt-2 inline-block text-sm text-primary-ink hover:underline" href={`/payroll/payslips/${real.id}/pdf`}>Open this payslip as PDF</a>}
+    </section>
+  </div>
+</App>

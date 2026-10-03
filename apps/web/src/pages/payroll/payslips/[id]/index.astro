@@ -1,0 +1,102 @@
+---
+import { itemLabels, resendPayslip, saveGrid } from '@hr/cms/server/payroll'
+import { formatCentavos } from '@hr/shared'
+
+import Icon from '../../../../components/Icon.astro'
+import App from '../../../../layouts/App.astro'
+import { errorMessage } from '../../../../lib/errors'
+import { setFlash } from '../../../../lib/flash'
+
+const { payload, user } = Astro.locals
+const id = Number(Astro.params.id)
+const slip = await payload.findByID({ collection: 'payslips', id, depth: 1, user, overrideAccess: false, disableErrors: true })
+if (!slip) return new Response(null, { status: 404 })
+const period = typeof slip.period === 'object' ? slip.period : await payload.findByID({ collection: 'payroll-periods', id: slip.period, overrideAccess: true })
+const employee = typeof slip.employee === 'object' ? slip.employee : null
+const settings = await payload.findGlobal({ slug: 'payslip-settings', user, overrideAccess: false })
+const labels = itemLabels(settings)
+const me = { id: user!.id, name: user!.name, email: user!.email }
+let errors: string[] = []
+let posted: Record<string, string> = {}
+
+if (Astro.request.method === 'POST') {
+  const fd = await Astro.request.formData()
+  const action = String(fd.get('action'))
+  try {
+    if (action === 'resend') {
+      const r = await resendPayslip(payload, me, id)
+      setFlash(Astro.cookies, { type: r.queued ? 'success' : 'error', message: r.queued ? 'The payslip is being emailed.' : 'This employee has no email address on file.' })
+      return Astro.redirect(`/payroll/payslips/${id}`)
+    }
+    if (action === 'delete') {
+      await payload.delete({ collection: 'payslips', id, user, overrideAccess: false })
+      setFlash(Astro.cookies, { type: 'success', message: 'Payslip deleted.' })
+      return Astro.redirect(`/payroll/${period.id}`)
+    }
+    const values: Record<string, string> = {}
+    labels.earnings.forEach((l, i) => (values[`e:${l}`] = String(fd.get(`e_${i}`) ?? '')))
+    labels.deductions.forEach((l, i) => (values[`d:${l}`] = String(fd.get(`d_${i}`) ?? '')))
+    for (const [k, v] of fd.entries()) if (typeof v === 'string') posted[k] = v
+    const res = await saveGrid(payload, me, period.id, [{ id, values, remarks: String(fd.get('remarks') ?? '') }])
+    if (res.ok) {
+      setFlash(Astro.cookies, { type: 'success', message: 'Payslip saved.' })
+      return Astro.redirect(`/payroll/payslips/${id}`)
+    }
+    errors = res.errors.map((e) => e.message)
+  } catch (err) {
+    errors = [errorMessage(err)]
+  }
+  Astro.response.status = 400
+}
+const sym = settings.currencySymbol || '₱'
+const amt = (items: { label: string; amount: number }[] | null | undefined, label: string) => (items?.find((i) => i.label === label)?.amount ?? 0).toFixed(2)
+const extra = [...(slip.earnings ?? []).filter((i) => !labels.earnings.includes(i.label)), ...(slip.deductions ?? []).filter((i) => !labels.deductions.includes(i.label))]
+const released = period.status === 'Released'
+---
+<App title={`Payslip — ${slip.fullName}`} heading={slip.fullName ?? 'Payslip'} description={`${period.name} · ${slip.employeeCode ?? ''} · ${slip.position ?? ''}`} back={{ href: `/payroll/${period.id}`, label: period.name }}>
+  <Fragment slot="actions">
+    <a class="btn-secondary" href={`/payroll/payslips/${id}/print`}><Icon name="printer" /> Print</a>
+    <a class="btn-secondary" href={`/payroll/payslips/${id}/pdf`}><Icon name="download" /> PDF</a>
+    {released && (
+      <form method="post" data-confirm={`Email this payslip to ${employee?.email ?? 'the employee'}?`}>
+        <input type="hidden" name="action" value="resend" />
+        <button class="btn-primary"><Icon name="send" /> {slip.correctedAfterRelease ? 'Send corrected payslip' : 'Email again'}</button>
+      </form>
+    )}
+  </Fragment>
+  {slip.correctedAfterRelease && <div class="mb-4 rounded-lg bg-warning-soft px-4 py-3 text-sm text-warning">Changed after the payroll was released. Send the corrected payslip to the employee.</div>}
+  {errors.length > 0 && <div class="mb-4 rounded-lg bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{errors.map((e) => <p>{e}</p>)}</div>}
+  <form method="post" class="grid gap-6 lg:grid-cols-2" data-dirty-guard>
+    <input type="hidden" name="action" value="save" />
+    {[['Earnings', labels.earnings, 'e', slip.earnings], ['Deductions', labels.deductions, 'd', slip.deductions]].map(([title, list, kind, items]) => (
+      <fieldset class="card space-y-3 p-5">
+        <legend class="px-1 text-sm font-semibold">{title as string}</legend>
+        {(list as string[]).map((l, i) => (
+          <div class="flex items-center gap-3">
+            <label class="flex-1 text-sm" for={`${kind}_${i}`}>{l}</label>
+            <input class="input max-w-40 text-right tabular" id={`${kind}_${i}`} name={`${kind}_${i}`} inputmode="decimal" value={posted[`${kind}_${i}`] ?? amt(items as never, l)} />
+          </div>
+        ))}
+      </fieldset>
+    ))}
+    {extra.length > 0 && (
+      <p class="text-xs text-muted lg:col-span-2">Also on this payslip (not in the template): {extra.map((i) => `${i.label} ${formatCentavos(Math.round(i.amount * 100), sym)}`).join(', ')}.</p>
+    )}
+    <div class="card space-y-3 p-5 lg:col-span-2">
+      <dl class="grid grid-cols-3 gap-4 text-center">
+        <div><dt class="text-xs text-muted">Gross pay</dt><dd class="text-xl font-semibold tabular">{formatCentavos(Math.round((slip.grossPay ?? 0) * 100), sym)}</dd></div>
+        <div><dt class="text-xs text-muted">Deductions</dt><dd class="text-xl font-semibold tabular">{formatCentavos(Math.round((slip.totalDeductions ?? 0) * 100), sym)}</dd></div>
+        <div><dt class="text-xs text-muted">Net pay</dt><dd class="text-xl font-semibold text-primary-ink tabular">{formatCentavos(Math.round((slip.netPay ?? 0) * 100), sym)}</dd></div>
+      </dl>
+      <div><label class="label" for="remarks">Remarks</label><textarea class="input" id="remarks" name="remarks">{posted.remarks ?? slip.remarks ?? ''}</textarea></div>
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <button class="btn-primary">Save payslip</button>
+        <p class="text-xs text-muted">Totals update after saving.</p>
+      </div>
+    </div>
+  </form>
+  <form method="post" class="mt-6" data-confirm="Delete this payslip?">
+    <input type="hidden" name="action" value="delete" />
+    <button class="btn-danger btn-sm"><Icon name="trash" class="size-3.5" /> Delete payslip</button>
+  </form>
+</App>

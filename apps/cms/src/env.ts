@@ -7,7 +7,8 @@ import path from 'node:path'
 function findRepoRoot(start: string): string | null {
   let dir = start
   for (let i = 0; i < 6; i++) {
-    if (fs.existsSync(path.join(dir, 'pnpm-workspace.yaml'))) return dir
+    // Source checkout (pnpm-workspace.yaml) or a deployed release (passenger.cjs)
+    if (fs.existsSync(path.join(dir, 'pnpm-workspace.yaml')) || fs.existsSync(path.join(dir, 'passenger.cjs'))) return dir
     const parent = path.dirname(dir)
     if (parent === dir) break
     dir = parent
@@ -22,12 +23,17 @@ export const IS_PROD = process.env.NODE_ENV === 'production'
 
 /** Called when Payload starts (not at build time): refuse to run production with unsafe settings. */
 export function assertProductionEnv() {
-  if (!IS_PROD) return
-  if (!process.env.DATA_DIR) {
+  // The built-in development secret is only acceptable in development and tests: everything else
+  // (including a server started without NODE_ENV) must have a real secret.
+  const devOrTest = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test'
+  if (!devOrTest && (process.env.PAYLOAD_SECRET ?? '').length < 32) {
+    throw new Error('PAYLOAD_SECRET must be set to a random string of at least 32 characters.')
+  }
+  if (IS_PROD && !process.env.DATA_DIR) {
     throw new Error('DATA_DIR must be set in production (absolute path outside the deploy folder).')
   }
-  if ((process.env.PAYLOAD_SECRET ?? '').length < 32) {
-    throw new Error('PAYLOAD_SECRET must be set to a random string of at least 32 characters.')
+  if (IS_PROD && !process.env.SERVER_URL) {
+    throw new Error('SERVER_URL must be set in production (e.g. https://hr.example.com).')
   }
 }
 

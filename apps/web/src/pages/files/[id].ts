@@ -25,7 +25,8 @@ export const GET: APIRoute = async ({ params, locals }) => {
     headers: {
       'Content-Type': doc.mimeType ?? 'application/octet-stream',
       'Content-Length': String(stat.size),
-      'Cache-Control': isPublic ? 'public, max-age=300' : 'private, max-age=300',
+      // Personal data must not stay in browser or proxy caches.
+      'Cache-Control': isPublic ? 'public, max-age=300' : 'private, no-store',
       'Content-Disposition': `inline; filename="${encodeURIComponent(doc.filename)}"`,
       'X-Content-Type-Options': 'nosniff',
       // SVGs could carry scripts; never let an uploaded file run code on this origin.

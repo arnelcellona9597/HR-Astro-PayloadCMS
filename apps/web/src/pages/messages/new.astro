@@ -1,0 +1,248 @@
+---
+import { queueMessage } from '@hr/cms/server/mailer'
+import { CLASSIFICATIONS, CONTEXT_MERGE_FIELDS, EMPLOYMENT_STATUSES, MERGE_FIELDS } from '@hr/shared'
+
+import Icon from '../../components/Icon.astro'
+import App from '../../layouts/App.astro'
+import { branchChoices, employeeChoices } from '../../lib/choices'
+import { MESSAGE_CATEGORIES, parseCompose } from '../../lib/compose'
+import { errorMessage } from '../../lib/errors'
+import { setFlash } from '../../lib/flash'
+import { ATTACHMENT_TYPES, checkUpload, saveUpload } from '../../lib/upload'
+
+const { payload, user } = Astro.locals
+const q = Astro.url.searchParams
+const MAX_ATTACH = 5 * 1024 * 1024
+
+const templates = await payload.find({ collection: 'email-templates', sort: 'name', pagination: false, depth: 0, user, overrideAccess: false })
+const chosen = templates.docs.find((t) => String(t.id) === q.get('template') || (t.key && t.key === q.get('template')))
+
+// Values that survive a failed submit (or come from shortcuts like "Email reminder to all missing")
+let values = {
+  subject: chosen?.subject ?? '',
+  body: chosen?.body ?? '',
+  category: chosen?.category ?? q.get('category') ?? 'Announcement',
+  employees: (q.get('employees') ?? '').split(',').map(Number).filter(Boolean),
+  emails: '',
+}
+const ctx: Record<string, string> = {}
+for (const [k, v] of q.entries()) if (k.startsWith('ctx_')) ctx[k.slice(4)] = v
+let error = ''
+
+if (Astro.request.method === 'POST') {
+  const fd = await Astro.request.formData()
+  const { input, error: parseError } = parseCompose(fd, user)
+  values = {
+    subject: String(fd.get('subject') ?? ''),
+    body: String(fd.get('body') ?? ''),
+    category: String(fd.get('category') ?? 'General') as never,
+    employees: fd.getAll('employees').map(Number),
+    emails: String(fd.get('emails') ?? ''),
+  }
+  for (const [k, v] of fd.entries()) if (k.startsWith('ctx_') && typeof v === 'string') ctx[k.slice(4)] = v
+  const files = (fd.getAll('attachments') as File[]).filter((f) => f && f.size > 0)
+  const totalSize = files.reduce((s, f) => s + f.size, 0)
+  const badFile = (await Promise.all(files.map((f) => checkUpload(f, ATTACHMENT_TYPES, MAX_ATTACH)))).find(Boolean)
+  if (parseError) error = parseError
+  else if (badFile) error = `Attachment: ${badFile}`
+  else if (totalSize > MAX_ATTACH) error = 'Attachments are larger than 5 MB in total.'
+  else {
+    try {
+      const attachments: number[] = []
+      for (const f of files) attachments.push(await saveUpload(payload, user, f, `Attachment: ${input!.subject}`))
+      const res = await queueMessage(payload, { ...input!, attachments })
+      setFlash(Astro.cookies, {
+        type: 'success',
+        message: `Message queued for ${res.queued} recipient(s)${res.skipped ? `; ${res.skipped} skipped (no email address)` : ''}. It is being sent now.`,
+      })
+      return Astro.redirect(`/messages/${res.messageId}`)
+    } catch (err) {
+      error = errorMessage(err)
+    }
+  }
+  Astro.response.status = 400
+}
+
+const [employees, branches, users] = await Promise.all([
+  employeeChoices(payload, true),
+  branchChoices(payload),
+  payload.find({ collection: 'users', where: { status: { equals: 'approved' } }, sort: 'name', pagination: false, depth: 0, overrideAccess: true }),
+])
+const templateJson = JSON.stringify(Object.fromEntries(templates.docs.map((t) => [t.id, { subject: t.subject, body: t.body, category: t.category }])))
+const ctxFields = CONTEXT_MERGE_FIELDS.filter((f) => f.name in ctx)
+---
+<App title="New message" heading="New message" back={{ href: '/messages', label: 'Messages' }}>
+  {error && <div class="mb-4 rounded-lg bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{error}</div>}
+  <form method="post" enctype="multipart/form-data" class="grid gap-6 xl:grid-cols-3" id="compose" data-dirty-guard>
+    {Object.entries(ctx).map(([k, v]) => <input type="hidden" name={`ctx_${k}`} value={v} />)}
+    <div class="space-y-6 xl:col-span-2">
+      <fieldset class="card space-y-4 p-5">
+        <legend class="px-1 text-sm font-semibold">Recipients</legend>
+        <div>
+          <label class="label" for="employees">Specific employees</label>
+          <input type="search" class="input mb-2" placeholder="Type to filter…" data-filter-for="employees" aria-label="Filter employees" />
+          <select class="input" id="employees" name="employees" multiple size="7">
+            {employees.map((e) => <option value={e.value} selected={values.employees.includes(Number(e.value))}>{e.label}</option>)}
+          </select>
+          <p class="field-help">Ctrl/⌘-click to choose several. <span data-count-for="employees"></span></p>
+        </div>
+        <div class="rounded-lg bg-surface-2 p-4">
+          <p class="label">Or a group of employees</p>
+          <label class="mb-3 flex items-center gap-2 text-sm"><input type="checkbox" name="allActive" class="size-4" /> All active employees</label>
+          <div class="grid gap-4 sm:grid-cols-3">
+            <div>
+              <label class="label" for="groupBranch">Branch</label>
+              <select class="input" id="groupBranch" name="groupBranch" multiple size="4">{branches.map((b) => <option value={b.value}>{b.label}</option>)}</select>
+            </div>
+            <div>
+              <span class="label">Classification</span>
+              {CLASSIFICATIONS.map((c) => <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="groupClassification" value={c} class="size-4" /> {c}</label>)}
+            </div>
+            <div>
+              <span class="label">Employment status</span>
+              {EMPLOYMENT_STATUSES.map((c) => <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="groupStatus" value={c} class="size-4" /> {c}</label>)}
+            </div>
+          </div>
+          <p class="field-help mt-2">Employees must match every filter you choose (e.g. COS in PENRO Laguna).</p>
+        </div>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label class="label" for="users">HR users</label>
+            <label class="mb-2 flex items-center gap-2 text-sm"><input type="checkbox" name="allUsers" class="size-4" /> All HR users</label>
+            <select class="input" id="users" name="users" multiple size="4">{users.docs.map((u) => <option value={u.id}>{u.name} — {u.email}</option>)}</select>
+          </div>
+          <div>
+            <label class="label" for="emails">Other email addresses</label>
+            <textarea class="input min-h-28" id="emails" name="emails" placeholder="one@example.com, two@example.com">{values.emails}</textarea>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="card space-y-4 p-5">
+        <legend class="px-1 text-sm font-semibold">Message</legend>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label class="label" for="template">Start from a template</label>
+            <select class="input" id="template">
+              <option value="">— Blank —</option>
+              {templates.docs.map((t) => <option value={t.id} selected={t.id === chosen?.id}>{t.category}: {t.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label class="label" for="category">Category</label>
+            <select class="input" id="category" name="category">{MESSAGE_CATEGORIES.map((c) => <option selected={c === values.category}>{c}</option>)}</select>
+          </div>
+        </div>
+        <div>
+          <label class="label" for="subject">Subject</label>
+          <input class="input" id="subject" name="subject" required maxlength="200" value={values.subject} />
+        </div>
+        <div>
+          <label class="label" for="body">Message</label>
+          <textarea class="input min-h-64 font-[inherit]" id="body" name="body" required>{values.body}</textarea>
+        </div>
+        <div>
+          <label class="label" for="attachments">Attachments (optional)</label>
+          <input class="input" id="attachments" name="attachments" type="file" multiple accept="application/pdf,image/png,image/jpeg,image/webp" />
+          <p class="field-help">PDF or images, up to 5 MB in total.</p>
+        </div>
+      </fieldset>
+      <div class="flex flex-wrap gap-3">
+        <button type="button" class="btn-secondary" id="preview-btn"><Icon name="search" /> Preview</button>
+        <button class="btn-primary" data-confirm-send><Icon name="send" /> Send</button>
+        <a href="/messages" class="btn-ghost">Cancel</a>
+      </div>
+    </div>
+
+    <aside class="h-fit space-y-4 xl:sticky xl:top-6">
+      <section class="card p-4 text-sm">
+        <h2 class="mb-2 font-semibold">Personalise with</h2>
+        <p class="mb-2 text-xs text-muted">Click to insert. Each person sees their own details.</p>
+        <div class="flex flex-wrap gap-1.5">
+          {[...MERGE_FIELDS, ...ctxFields].map((f) => (
+            <button type="button" class="badge-neutral cursor-pointer font-mono hover:bg-primary-soft" data-insert={`{{${f.name}}}`} title={f.description}>{`{{${f.name}}}`}</button>
+          ))}
+        </div>
+      </section>
+      <section class="card p-4 text-sm" id="preview" hidden>
+        <h2 class="mb-2 font-semibold">Preview</h2>
+        <p id="preview-summary" class="mb-2 text-fg-2"></p>
+        <ul id="preview-skipped" class="mb-2 space-y-0.5 text-xs text-warning"></ul>
+        <iframe id="preview-frame" title="Email preview" class="h-96 w-full rounded-lg border border-line bg-white" sandbox=""></iframe>
+      </section>
+    </aside>
+  </form>
+</App>
+
+<script define:vars={{ templateJson }}>
+  const templates = JSON.parse(templateJson)
+  const form = document.getElementById('compose')
+  const subject = document.getElementById('subject')
+  const body = document.getElementById('body')
+  document.getElementById('template').addEventListener('change', (e) => {
+    const t = templates[e.target.value]
+    if (!t) return
+    if ((subject.value || body.value) && !confirm('Replace the current subject and message with this template?')) return
+    subject.value = t.subject
+    body.value = t.body
+    document.getElementById('category').value = ['Announcement', 'Leave', 'Payroll', 'Reminder', 'General'].includes(t.category) ? t.category : 'General'
+  })
+  let lastFocus = body
+  subject.addEventListener('focus', () => (lastFocus = subject))
+  body.addEventListener('focus', () => (lastFocus = body))
+  document.querySelectorAll('[data-insert]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const el = lastFocus
+      const s = el.selectionStart ?? el.value.length
+      el.value = el.value.slice(0, s) + b.dataset.insert + el.value.slice(el.selectionEnd ?? s)
+      el.focus()
+      el.selectionStart = el.selectionEnd = s + b.dataset.insert.length
+    }),
+  )
+  document.querySelectorAll('[data-filter-for]').forEach((input) => {
+    const select = document.getElementById(input.dataset.filterFor)
+    const opts = [...select.options]
+    input.addEventListener('input', () => {
+      const q = input.value.toLowerCase()
+      for (const o of opts) o.hidden = q && !o.text.toLowerCase().includes(q) && !o.selected
+    })
+    const count = document.querySelector(`[data-count-for="${input.dataset.filterFor}"]`)
+    const update = () => (count.textContent = select.selectedOptions.length ? `${select.selectedOptions.length} selected.` : '')
+    select.addEventListener('change', update)
+    update()
+  })
+  document.getElementById('preview-btn').addEventListener('click', async () => {
+    const fd = new FormData(form)
+    fd.delete('attachments')
+    const res = await fetch('/messages/preview', { method: 'POST', body: fd })
+    const data = await res.json()
+    const box = document.getElementById('preview')
+    box.hidden = false
+    const summary = document.getElementById('preview-summary')
+    const skipped = document.getElementById('preview-skipped')
+    skipped.replaceChildren()
+    if (!res.ok) {
+      summary.textContent = data.error
+      summary.className = 'mb-2 text-danger'
+      document.getElementById('preview-frame').srcdoc = ''
+      return
+    }
+    summary.className = 'mb-2 text-fg-2'
+    summary.textContent = `${data.deliverable} of ${data.total} recipient(s) will get this email. Showing the version for ${data.sample.name} <${data.sample.to ?? 'no email'}>.`
+    for (const s of data.skipped.slice(0, 10)) {
+      const li = document.createElement('li')
+      li.textContent = `Skipped: ${s.name} — ${s.reason}`
+      skipped.append(li)
+    }
+    if (data.skipped.length > 10) {
+      const li = document.createElement('li')
+      li.textContent = `…and ${data.skipped.length - 10} more`
+      skipped.append(li)
+    }
+    document.getElementById('preview-frame').srcdoc = data.sample.html
+    box.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  })
+  form.addEventListener('submit', (e) => {
+    if (!confirm('Send this message now?')) e.preventDefault()
+  })
+</script>

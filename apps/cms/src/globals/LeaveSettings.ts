@@ -1,6 +1,6 @@
 import { APIError, type GlobalConfig } from 'payload'
 
-import { isHrAdmin, isStaff } from '../access'
+import { isStaff } from '../access'
 import { diffDocs, writeAudit } from '../hooks/audit'
 
 export const DEFAULT_WELLNESS_ALLOWANCE = 5
@@ -9,7 +9,7 @@ export const LeaveSettings: GlobalConfig = {
   slug: 'leave-settings',
   label: 'Wellness Leave Settings',
   admin: { group: 'Settings' },
-  access: { read: isStaff, update: isHrAdmin },
+  access: { read: isStaff, update: isStaff },
   fields: [
     {
       name: 'annualAllowance',

@@ -6,7 +6,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hr-e2e-'))
+// Fixed location so the tests can read captured emails (sign-in codes) from DATA_DIR/outbox.jsonl.
+const dataDir = path.join(os.tmpdir(), `hr-e2e-${process.env.E2E_PORT || '4400'}`)
+fs.rmSync(dataDir, { recursive: true, force: true })
+fs.mkdirSync(dataDir, { recursive: true })
 const port = process.env.E2E_PORT || '4400'
 const env = {
   ...process.env,
@@ -16,11 +19,19 @@ const env = {
   SERVER_URL: `http://localhost:${port}`,
   PAYLOAD_SECRET: 'e2e-secret-e2e-secret-e2e-secret-e2e',
   SMTP_HOST: '',
+  HR_EMAIL_CAPTURE: '1',
+  HR_E2E: '1',
 }
 // Runs migrations (production mode) and loads the sample data.
 execFileSync(path.join(root, 'node_modules/.bin/tsx'), ['src/seed/index.ts'], {
   cwd: path.join(root, 'apps/cms'),
   env: { ...env, HR_SEED_FORCE: '1' },
+  stdio: 'inherit',
+})
+// First System Admin through the real (bundled) create-admin command, as on the server.
+execFileSync(process.execPath, ['apps/cms/dist-cli/create-admin.mjs', '--name', 'Ana Admin', '--email', 'admin@e2e.test'], {
+  cwd: root,
+  env: { ...env, HR_ADMIN_PASSWORD: 'Adm1nPassword!' },
   stdio: 'inherit',
 })
 const server = spawn(process.execPath, ['server.mjs'], { cwd: root, env, stdio: 'inherit' })

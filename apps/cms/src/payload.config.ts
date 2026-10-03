@@ -1,7 +1,6 @@
 import './sqlite-busy-timeout'
 
 import { sqliteAdapter } from '@payloadcms/db-sqlite'
-import { nodemailerAdapter } from '@payloadcms/email-nodemailer'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildConfig } from 'payload'
@@ -13,29 +12,32 @@ import { ComplianceCollections } from './collections/compliance'
 import { Employees } from './collections/Employees'
 import { Holidays } from './collections/Holidays'
 import { ImportJobs } from './collections/ImportJobs'
+import { LoginChallenges } from './collections/LoginChallenges'
 import { Media } from './collections/Media'
+import { EmailTemplates, MessageRecipients, Messages, Notifications } from './collections/messaging'
+import { PayrollPeriods, Payslips } from './collections/payroll'
 import { Users } from './collections/Users'
 import { WellnessLeaves } from './collections/WellnessLeaves'
-import { assertProductionEnv, DB_FILE, IS_PROD, PAYLOAD_SECRET, SERVER_URL } from './env'
+import { captureAdapter } from './email/capture'
+import { dbEmailAdapter } from './email/dbAdapter'
+import { withRestLimits } from './hooks/restLimits'
+import { assertProductionEnv, DATA_DIR, DB_FILE, IS_PROD, PAYLOAD_SECRET, SERVER_URL } from './env'
 import { LeaveSettings } from './globals/LeaveSettings'
+import { NotificationSettings } from './globals/NotificationSettings'
+import { PayslipSettings } from './globals/PayslipSettings'
 import { SiteSettings } from './globals/SiteSettings'
+import { SmtpSettings } from './globals/SmtpSettings'
+import { installWriteLock } from './server/dbLock'
+import { ensureDefaults } from './server/defaults'
+import { startQueueWorker } from './server/mailer'
 import { migrations } from './migrations'
 
 const dirname = path.dirname(fileURLToPath(import.meta.url))
 
-const smtpPort = Number(process.env.SMTP_PORT || 465)
-const email = process.env.SMTP_HOST
-  ? nodemailerAdapter({
-      defaultFromAddress: process.env.SMTP_FROM_ADDRESS || process.env.SMTP_USER || '',
-      defaultFromName: process.env.SMTP_FROM_NAME || 'HR System',
-      transportOptions: {
-        host: process.env.SMTP_HOST,
-        port: smtpPort,
-        secure: smtpPort === 465,
-        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-      },
-    })
-  : undefined
+// SMTP settings live in the database (Settings → Email server), never in files.
+// HR_EMAIL_CAPTURE=1 writes emails to DATA_DIR/outbox.jsonl instead (development and tests only).
+const capture = process.env.HR_EMAIL_CAPTURE === '1' && (!IS_PROD || process.env.HR_E2E === '1')
+const email = capture ? captureAdapter(DATA_DIR) : dbEmailAdapter()
 
 export default buildConfig({
   serverURL: SERVER_URL,
@@ -43,7 +45,7 @@ export default buildConfig({
   telemetry: false,
   admin: {
     user: Users.slug,
-    meta: { titleSuffix: ' · HR Admin' },
+    meta: { titleSuffix: ' · HR System Admin' },
     importMap: { baseDir: path.resolve(dirname) },
   },
   collections: [
@@ -52,18 +54,30 @@ export default buildConfig({
     Applications,
     WellnessLeaves,
     ...ComplianceCollections,
+    PayrollPeriods,
+    Payslips,
+    Messages,
+    MessageRecipients,
+    EmailTemplates,
+    Notifications,
     Holidays,
     Users,
     Media,
     AuditLogs,
     ImportJobs,
-  ],
-  globals: [SiteSettings, LeaveSettings],
-  onInit: async () => {
+    LoginChallenges,
+  ].map(withRestLimits),
+  globals: [SiteSettings, LeaveSettings, NotificationSettings, PayslipSettings, SmtpSettings],
+  // Relationship population depth is never needed beyond 3 levels; limits expensive REST queries.
+  maxDepth: 3,
+  onInit: async (payload) => {
     assertProductionEnv()
+    installWriteLock(payload)
+    await ensureDefaults(payload)
+    startQueueWorker(payload)
   },
   // Only same-site requests may use the cookie-authenticated API.
-  csrf: [SERVER_URL, 'http://localhost:4321', 'http://localhost:3001'],
+  csrf: IS_PROD ? [SERVER_URL] : [SERVER_URL, 'http://localhost:4321', 'http://localhost:3001'],
   cors: [SERVER_URL],
   graphQL: { disable: true },
   upload: { limits: { fileSize: 10 * 1024 * 1024 } },

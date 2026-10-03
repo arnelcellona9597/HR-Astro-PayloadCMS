@@ -2,24 +2,28 @@ import { defineMiddleware } from 'astro:middleware'
 
 import type { User } from '@hr/cms/types'
 
+import { emailConfigured } from '@hr/cms/server/mailer'
+import { decodeToken } from '@hr/cms/server/twofactor'
+
 import { clearAuthCookie, TOKEN_COOKIE } from './lib/auth'
 import { getHr } from './lib/payload'
 
-const PUBLIC_PATHS = new Set(['/login', '/register', '/forgot-password', '/reset-password'])
+const PUBLIC_PATHS = new Set(['/login', '/login/verify', '/register', '/forgot-password', '/reset-password', '/set-password', '/internal/queue'])
 const PUBLIC_PREFIXES = ['/_astro/', '/files/', '/favicon']
 
-// Pages only HR admins / super admins may open.
+// HR Staff can use everything except managing HR accounts.
 const ROLE_RULES: { prefix: string; roles: User['role'][] }[] = [
-  { prefix: '/users', roles: ['super-admin'] },
-  { prefix: '/settings', roles: ['super-admin'] },
-  { prefix: '/audit', roles: ['super-admin', 'hr-admin'] },
-  { prefix: '/data/import', roles: ['super-admin', 'hr-admin'] },
+  { prefix: '/users', roles: ['system-admin'] },
+  { prefix: '/settings/email-server', roles: ['system-admin'] },
 ]
+
+// In production the expected host comes from SERVER_URL, not from request headers.
+const EXPECTED_HOST = import.meta.env.PROD && process.env.SERVER_URL ? new URL(process.env.SERVER_URL).host : null
 
 /** Cross-site request forgery guard: state-changing requests must come from this site. */
 function sameOrigin(request: Request): boolean {
   if (request.method === 'GET' || request.method === 'HEAD') return true
-  const host = request.headers.get('x-forwarded-host') ?? request.headers.get('host')
+  const host = EXPECTED_HOST ?? request.headers.get('host')
   const source = request.headers.get('origin') ?? request.headers.get('referer')
   if (!host || !source) return false
   try {
@@ -45,7 +49,10 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
       // directly instead of relying on browser-specific Sec-Fetch headers.
       const res = await payload.auth({ headers: new Headers({ Authorization: `JWT ${token}` }) })
       const u = res.user as (User & { collection?: string }) | null
-      if (u && u.collection === 'users' && u.status === 'approved') user = u
+      if (u && u.collection === 'users' && u.status === 'approved') {
+        user = u
+        ctx.locals.sessionExpiresAt = (decodeToken(token).exp ?? 0) * 1000
+      }
     } catch {
       user = null
     }
@@ -65,6 +72,26 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
     return ctx.redirect(`/login${nextUrl}`)
   }
   if (user && (pathname === '/login' || pathname === '/register')) return ctx.redirect('/')
+
+  if (user) {
+    const [unread, mail] = await Promise.all([
+      payload.count({ collection: 'notifications', where: { and: [{ user: { equals: user.id } }, { readAt: { exists: false } }] }, overrideAccess: true }),
+      payload.findGlobal({ slug: 'notification-settings', overrideAccess: true }),
+    ])
+    ctx.locals.unreadNotifications = unread.totalDocs
+    const configured = await emailConfigured(payload)
+    const isAdmin = user.role === 'system-admin'
+    // Mail-server error text can reveal infrastructure details: full text for System Admins only.
+    ctx.locals.mailWarning = !configured
+      ? isAdmin
+        ? 'The email server is not configured. Sign-in codes are being written to the server log and no notifications are sent.'
+        : 'Email is not set up yet, so notifications are not being sent. Please tell your System Admin.'
+      : mail.smtpLastError
+        ? isAdmin
+          ? `Email problem: ${mail.smtpLastError}`
+          : 'There is a problem sending email. Please tell your System Admin.'
+        : null
+  }
 
   const rule = ROLE_RULES.find((r) => pathname === r.prefix || pathname.startsWith(`${r.prefix}/`))
   if (rule && user && !rule.roles.includes(user.role)) {

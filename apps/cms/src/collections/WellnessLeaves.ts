@@ -5,6 +5,7 @@ import { hrRecordAccess } from '../access'
 import { dateOnly, nameSnapshotFields } from '../fields'
 import { auditHooks } from '../hooks/audit'
 import { checkLeave, LEAVE_STATUSES } from '../server/leave'
+import { leaveNotification } from '../server/notify'
 
 const audit = auditHooks('lastName')
 
@@ -96,6 +97,17 @@ export const WellnessLeaves: CollectionConfig = {
         return data
       },
     ],
-    ...audit,
+    afterChange: [
+      ...audit.afterChange,
+      async ({ doc, previousDoc, operation, req }) => {
+        if (req.context?.skipNotifications) return doc
+        const statusChanged = operation === 'update' && previousDoc?.status !== doc.status
+        if (operation === 'create' || statusChanged) {
+          await leaveNotification(req, doc, operation === 'create' ? 'filed' : 'status')
+        }
+        return doc
+      },
+    ],
+    afterDelete: audit.afterDelete,
   },
 }

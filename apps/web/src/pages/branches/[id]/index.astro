@@ -25,13 +25,14 @@ const employees = await payload.find({
   select: { employeeId: true, fullName: true, position: true, classification: true, employmentStatus: true, dateHired: true },
 })
 const active = employees.docs.filter((e) => e.employmentStatus === 'Active')
-const isAdmin = user?.role === 'super-admin' || user?.role === 'hr-admin'
+// Every approved HR user (System Admin or HR Staff) may manage HR records.
+const canManage = Boolean(user)
 ---
 <App title={branch.name} heading={branch.name} description={[branch.address, branch.region, branch.contactNumber].filter(Boolean).join(' · ')} back={{ href: '/branches', label: 'Branches' }}>
   <Fragment slot="actions">
     <a class="btn-secondary" href={`/employees?branch=${id}`}><Icon name="search" /> Search employees here</a>
     <a class="btn-primary" href={`/branches/${id}/edit`}><Icon name="edit" /> Edit</a>
-    {isAdmin && (
+    {canManage && (
       <form method="post" data-confirm={`Delete ${branch.name}? Only possible when no employees or applicants are assigned.`}>
         <button class="btn-danger"><Icon name="trash" /> Delete</button>
       </form>

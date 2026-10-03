@@ -17,7 +17,9 @@ hosting (z.com Web Hosting "Personal") as a single Node.js process.
 | **Company branches** | Branch cards with address and COS/Contractual/Regular headcount (active only or all statuses), a stacked chart, and an employee list per branch. |
 | **Annual requirements** | Income Tax Return, Sworn Declaration, Personal Data Sheet and IPCR (with rating period and CSC adjectival rating). Per-year compliance %, a "not yet complied" list, and one-click generation of rows for all active employees. |
 | **Import / export** | Export ALL data (one workbook, one sheet per module) or any single module. Import templates with dropdowns. Imports are validated cell by cell and rehearsed through the real business rules, show a change preview, and are saved **all-or-nothing**. |
-| **Security** | Registration requires Super Admin approval (the first account becomes Super Admin). Roles: Super Admin, HR Admin, HR Staff. Lockout after 5 failed logins, per-IP rate limits, httpOnly session cookies, CSRF protection, server-side session revocation on logout, and an audit log of every change (before → after). Uploaded files are only served to signed-in staff. |
+| **Payroll & payslips** | Record-keeping only (no payment gateway, no tax formulas). Payroll periods, one payslip per employee, an editable grid or Excel import for the amounts, and totals added up in exact centavos. Payslips are printable and emailed to each employee as a PDF when payroll is released. Corrections after release are flagged and can be re-sent. The payslip template (header, pay items, shown fields, signatories, footer, paper size) is editable. |
+| **Messages & notifications** | Compose emails to specific employees, groups (branch / classification / status / all active), HR users or any address. Templates with `{{placeholders}}`, live preview and attachments. Automatic emails: leave filed or status changed, payslips, and account requests. A queue respects the host's hourly limit, retries failures and shows per-recipient delivery. HR users get in-app notifications (bell). |
+| **Security** | **Only System Admins create accounts** (email invitation → the user chooses their password; first admin via a server command). **Email 2FA** at every sign-in; **sessions end 12 hours after sign-in**. Two roles: **System Admin** (everything, including HR accounts and the email server) and **HR Staff** (everything else). **SMTP credentials stored in the database** (password encrypted). Lockout after 5 failed logins, per-IP rate limits, CSP and security headers, CSRF protection, content-based upload checks, Excel zip-bomb guard, serialized database writes, and an audit log of every change. See *Security notes* in DEPLOYMENT.md. |
 
 ## Project layout
 
@@ -41,12 +43,27 @@ Requirements: Node 22.12+, pnpm 10/11.
 ```bash
 pnpm install
 cp .env.example .env              # DATA_DIR can stay empty in development (uses ./data)
-pnpm --filter @hr/web dev         # first run: creates the database (answer "yes" if asked about schema changes)
-pnpm seed                         # optional: 140 sample employees, leave, onboarding and requirements
+echo "HR_EMAIL_CAPTURE=1" >> .env  # dev: emails (incl. sign-in codes) go to data/outbox.jsonl instead of SMTP
+pnpm seed                         # creates the database + sample data (140 employees, leave, payroll…)
+pnpm create-admin                 # the first System Admin (asks for name, email, password)
 pnpm dev                          # Astro on http://localhost:4321 (+ Payload admin proxied from :3001)
 ```
 
-Open http://localhost:4321/register to create the first (Super Admin) account.
+Sign in at http://localhost:4321/login. Sign-in codes and invitation links are in `data/outbox.jsonl`
+(with `HR_EMAIL_CAPTURE=1`) or, without email configured, in the server output.
+
+## Git workflow
+
+| Branch | Purpose |
+|---|---|
+| `main` | Live / production |
+| `development` | Integration of finished work |
+| `feature/…` | New features or enhancements (branch from `development`) |
+| `bugfix/…` | Bug fixes (from `development`) |
+| `hotfix/…` | Urgent production fixes (from `main`, merged into `main` and `development`) |
+| `version/…` or `update/…` | Version updates and maintenance (dependencies, upgrades) |
+
+Every change gets a clear commit message; merge into `development` with `--no-ff`, and into `main` only for a release.
 
 **Changing the data model:** edit a collection in `apps/cms/src/collections`, then create a migration
 (`pnpm migrate:create <name>`) and commit it. Production applies migrations automatically on start.
@@ -63,7 +80,9 @@ The integration tests cover, among other things:
 - registration can't grant itself a role, and pending users can't sign in;
 - leave allowance, overlap and holiday rules;
 - an export re-imports with **zero** changes (round trip);
-- a single bad row means **nothing** is imported, and a failure part-way through a commit rolls everything back.
+- a single bad row means **nothing** is imported, and a failure part-way through a commit rolls everything back;
+- no session token is released before the emailed code is entered, wrong/expired codes revoke the session, tokens last exactly 12 hours;
+- the email queue respects the hourly limit, retries, skips people without an address; payslip totals are exact and released payslips arrive as valid PDFs.
 
 ## Data accuracy notes
 

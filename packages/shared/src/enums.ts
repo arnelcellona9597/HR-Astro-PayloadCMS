@@ -6,11 +6,10 @@ export type Option<T extends string = string> = { label: string; value: T }
 const opts = <T extends string>(values: readonly T[]): Option<T>[] =>
   values.map((value) => ({ label: value, value }))
 
-export const ROLES = ['super-admin', 'hr-admin', 'hr-staff'] as const
+export const ROLES = ['system-admin', 'hr-staff'] as const
 export type Role = (typeof ROLES)[number]
 export const ROLE_LABELS: Record<Role, string> = {
-  'super-admin': 'Super Admin',
-  'hr-admin': 'HR Admin',
+  'system-admin': 'System Admin',
   'hr-staff': 'HR Staff',
 }
 

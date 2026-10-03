@@ -19,7 +19,14 @@ const page = await ctx.newPage()
 await page.goto(`${base}/login`)
 await page.fill('#email', process.env.EMAIL ?? 'admin@hr.test')
 await page.fill('#password', process.env.PASSWORD ?? 'Passw0rd123')
-await Promise.all([page.waitForURL((u) => !u.pathname.startsWith('/login')), page.click('button[type=submit], form button')])
+await page.click('form button')
+// Email 2FA: in development the code is captured in data/outbox.jsonl (HR_EMAIL_CAPTURE=1).
+await page.waitForURL((u) => u.pathname === '/login/verify')
+const outbox = process.env.OUTBOX ?? new URL('../data/outbox.jsonl', import.meta.url).pathname
+const mails = fs.readFileSync(outbox, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+const code = /(\d{6})/.exec(mails.reverse().find((m) => /sign-in code/.test(m.subject)).subject)[1]
+await page.fill('#code', code)
+await page.waitForURL((u) => !u.pathname.startsWith('/login'))
 for (const p of paths) {
   await page.goto(`${base}${p}`)
   await page.waitForLoadState('networkidle')

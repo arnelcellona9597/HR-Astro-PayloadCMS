@@ -1,11 +1,12 @@
 import { options } from '@hr/shared/enums'
 import { APIError, type CollectionConfig, type Where } from 'payload'
 
-import { hasRole, isSuperAdmin, superAdminField } from '../access'
+import { hasRole, isApproved, isSystemAdmin, systemAdminField } from '../access'
 import { IS_PROD, SERVER_URL } from '../env'
 import { auditHooks } from '../hooks/audit'
 
 export const PASSWORD_MIN_LENGTH = 10
+const TRUSTED_ONLY = ['login', 'refresh', 'resetPassword', 'unlock', 'forgotPassword']
 
 function checkPassword(password: unknown) {
   if (typeof password !== 'string') return
@@ -26,9 +27,11 @@ export const Users: CollectionConfig = {
     useAsTitle: 'name',
     defaultColumns: ['name', 'email', 'role', 'status', 'updatedAt'],
     group: 'Administration',
+    hidden: ({ user }) => (user as { role?: string } | null)?.role !== 'system-admin',
   },
   auth: {
-    tokenExpiration: 8 * 60 * 60, // 8 hours
+    // Sessions end 12 hours after sign-in. Token refresh is blocked in server.mjs, so this is absolute.
+    tokenExpiration: 12 * 60 * 60,
     maxLoginAttempts: 5,
     lockTime: 15 * 60 * 1000, // 15 minutes
     useSessions: true,
@@ -48,23 +51,34 @@ export const Users: CollectionConfig = {
     },
   },
   access: {
-    // Public sign-up is allowed; the account stays "pending" until a Super Admin approves it.
-    create: () => true,
+    // Only System Admins create accounts (invite flow or the create-admin command, which uses overrideAccess).
+    create: isSystemAdmin,
     read: ({ req }) => {
-      if (hasRole(req.user, 'super-admin')) return true
+      if (hasRole(req.user, 'system-admin')) return true
       if (!req.user) return false
       return { id: { equals: req.user.id } } as Where
     },
     update: ({ req }) => {
-      if (hasRole(req.user, 'super-admin')) return true
+      if (hasRole(req.user, 'system-admin')) return true
       if (!req.user || (req.user as { status?: string }).status !== 'approved') return false
       return { id: { equals: req.user.id } } as Where
     },
-    delete: isSuperAdmin,
-    unlock: isSuperAdmin,
-    admin: ({ req }) => hasRole(req.user, 'super-admin', 'hr-admin'),
+    delete: isSystemAdmin,
+    unlock: isSystemAdmin,
+    // Both roles may use the Payload admin panel; the Users collection itself is hidden from HR Staff.
+    admin: ({ req }) => isApproved(req.user),
   },
   fields: [
+    {
+      // Overrides Payload's built-in auth email field: only System Admins may change an address
+      // (otherwise a stolen session could redirect future 2FA codes to an attacker's mailbox).
+      name: 'email',
+      type: 'email',
+      required: true,
+      unique: true,
+      index: true,
+      access: { update: systemAdminField },
+    },
     { name: 'name', label: 'Full Name', type: 'text', required: true, maxLength: 120 },
     {
       name: 'role',
@@ -73,7 +87,7 @@ export const Users: CollectionConfig = {
       defaultValue: 'hr-staff',
       options: options.roles,
       saveToJWT: true,
-      access: { create: superAdminField, update: superAdminField },
+      access: { create: systemAdminField, update: systemAdminField },
       admin: { position: 'sidebar' },
     },
     {
@@ -84,48 +98,70 @@ export const Users: CollectionConfig = {
       options: options.userStatuses,
       saveToJWT: true,
       index: true,
-      access: { create: superAdminField, update: superAdminField },
+      access: { create: systemAdminField, update: systemAdminField },
       admin: { position: 'sidebar', description: 'Only approved accounts can sign in.' },
     },
-    { name: 'approvedAt', type: 'date', admin: { readOnly: true, position: 'sidebar' } },
+    {
+      name: 'emailVerified',
+      type: 'checkbox',
+      defaultValue: false,
+      index: true,
+      access: { create: () => false, update: () => false },
+      admin: { readOnly: true, position: 'sidebar', description: 'Set when the user enters an emailed code.' },
+    },
+    {
+      name: 'approvedAt',
+      type: 'date',
+      access: { create: () => false, update: () => false },
+      admin: { readOnly: true, position: 'sidebar' },
+    },
   ],
   hooks: {
     beforeOperation: [
-      ({ args, operation }) => {
+      ({ args, operation, req }) => {
+        // Sign-in, token refresh, password reset and unlock must come from this app's own flows
+        // (email 2FA, 12-hour sessions). Anything else — e.g. Payload's REST endpoints, however the
+        // URL is encoded — is refused here, inside Payload, not just by the URL filter in server.mjs.
+        if (TRUSTED_ONLY.includes(operation) && req.context?.trustedAuth !== true) {
+          throw new APIError('Please sign in on the sign-in page.', 403, undefined, true)
+        }
         if (operation === 'create' || operation === 'update' || operation === 'resetPassword') {
-          checkPassword(args.data?.password)
+          const password = (args.data as { password?: unknown } | undefined)?.password
+          if (password !== undefined) {
+            checkPassword(password)
+            // Changing a password needs proof: the current password (My account), an invite or a reset link.
+            if (operation === 'update' && req.context?.passwordChange !== true) {
+              throw new APIError('Change passwords from “My account” (or use a password reset link).', 403, undefined, true)
+            }
+          }
         }
         return args
       },
     ],
     beforeChange: [
       async ({ data, operation, originalDoc, req }) => {
-        if (operation === 'create') {
-          // The very first account becomes the Super Admin so the system can be bootstrapped.
-          const { totalDocs } = await req.payload.count({ collection: 'users', overrideAccess: true, req })
-          if (totalDocs === 0) {
-            data.role = 'super-admin'
-            data.status = 'approved'
-          }
+        // A new address must be confirmed again with an emailed code.
+        if (operation === 'update' && data.email && originalDoc?.email && data.email.toLowerCase() !== originalDoc.email.toLowerCase()) {
+          data.emailVerified = false
         }
         if (data.status === 'approved' && originalDoc?.status !== 'approved') {
           data.approvedAt = new Date().toISOString()
         }
-        // Never leave the system without an active Super Admin.
+        // Never leave the system without an active System Admin.
         const losingSuperAdmin =
           operation === 'update' &&
-          originalDoc?.role === 'super-admin' &&
+          originalDoc?.role === 'system-admin' &&
           originalDoc?.status === 'approved' &&
-          ((data.role && data.role !== 'super-admin') || (data.status && data.status !== 'approved'))
+          ((data.role && data.role !== 'system-admin') || (data.status && data.status !== 'approved'))
         if (losingSuperAdmin) {
           const { totalDocs } = await req.payload.count({
             collection: 'users',
-            where: { role: { equals: 'super-admin' }, status: { equals: 'approved' }, id: { not_equals: originalDoc.id } },
+            where: { role: { equals: 'system-admin' }, status: { equals: 'approved' }, id: { not_equals: originalDoc.id } },
             overrideAccess: true,
             req,
           })
           if (totalDocs === 0) {
-            throw new APIError('At least one approved Super Admin must remain.', 400, undefined, true)
+            throw new APIError('At least one approved System Admin must remain.', 400, undefined, true)
           }
         }
         return data
@@ -141,42 +177,15 @@ export const Users: CollectionConfig = {
     beforeLogin: [
       ({ user }) => {
         if (user.status === 'pending') {
-          throw new APIError('Your account is waiting for approval by a Super Admin.', 403, undefined, true)
+          throw new APIError('Your account is waiting for approval by a System Admin.', 403, undefined, true)
         }
         if (user.status !== 'approved') {
-          throw new APIError('Your account has been disabled. Contact a Super Admin.', 403, undefined, true)
+          throw new APIError('Your account has been disabled. Contact a System Admin.', 403, undefined, true)
         }
         return user
       },
     ],
-    afterChange: [
-      ...audit.afterChange,
-      async ({ doc, operation, req }) => {
-        if (operation !== 'create' || doc.status !== 'pending') return doc
-        // Best-effort notice to Super Admins; a mail failure must not block registration.
-        try {
-          const admins = await req.payload.find({
-            collection: 'users',
-            where: { role: { equals: 'super-admin' }, status: { equals: 'approved' } },
-            overrideAccess: true,
-            limit: 20,
-            depth: 0,
-            req,
-          })
-          const to = admins.docs.map((a) => a.email).filter(Boolean)
-          if (to.length && process.env.SMTP_HOST) {
-            await req.payload.sendEmail({
-              to,
-              subject: `New HR System registration: ${doc.name}`,
-              html: `<p>${doc.name} (${doc.email}) registered and is waiting for approval.</p><p><a href="${SERVER_URL}/users">Review pending accounts</a></p>`,
-            })
-          }
-        } catch (err) {
-          req.payload.logger.warn({ err, msg: 'Could not send registration notice' })
-        }
-        return doc
-      },
-    ],
+    afterChange: audit.afterChange,
     afterDelete: audit.afterDelete,
   },
   timestamps: true,

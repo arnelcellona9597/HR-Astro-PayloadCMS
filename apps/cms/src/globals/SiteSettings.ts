@@ -1,7 +1,7 @@
 import { DEFAULT_PALETTE, HEX_RE, PALETTE_KEYS, options } from '@hr/shared'
-import type { Field, GlobalConfig } from 'payload'
+import { APIError, type Field, type GlobalConfig } from 'payload'
 
-import { anyone, isSuperAdmin } from '../access'
+import { anyone, isStaff } from '../access'
 import { writeAudit, diffDocs } from '../hooks/audit'
 
 const colorField = (key: (typeof PALETTE_KEYS)[number]): Field => ({
@@ -18,7 +18,7 @@ export const SiteSettings: GlobalConfig = {
   label: 'Branding & Theme',
   admin: { group: 'Settings' },
   // Read is public: the login page needs the company name, logo and colors.
-  access: { read: anyone, update: isSuperAdmin },
+  access: { read: anyone, update: isStaff },
   fields: [
     { name: 'companyName', type: 'text', required: true, defaultValue: 'HR Management System', maxLength: 120 },
     { name: 'tagline', type: 'text', maxLength: 160 },
@@ -46,6 +46,19 @@ export const SiteSettings: GlobalConfig = {
     },
   ],
   hooks: {
+    beforeChange: [
+      async ({ data, req }) => {
+        const logoId = typeof data.logo === 'object' && data.logo ? data.logo.id : data.logo
+        if (logoId) {
+          // Only images can become the (public) logo — never a scanned document.
+          const media = await req.payload.findByID({ collection: 'media', id: logoId, depth: 0, overrideAccess: true, req })
+          if (!/^image\/(png|jpeg|webp|gif)$/.test(media.mimeType ?? '')) {
+            throw new APIError('The logo must be a PNG, JPG, WEBP or GIF image.', 400, undefined, true)
+          }
+        }
+        return data
+      },
+    ],
     afterChange: [
       async ({ doc, previousDoc, req }) => {
         // The logo must be readable on the (public) login page.

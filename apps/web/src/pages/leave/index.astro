@@ -44,7 +44,8 @@ const daysUsed = stats.byMonth.reduce((s, m) => s + m.days, 0)
 const filings = stats.byMonth.reduce((s, m) => s + m.filings, 0)
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const monthly = (key: 'filings' | 'days') => MONTHS.map((_, i) => stats.byMonth.find((m) => m.month === i + 1)?.[key] ?? 0)
-const isAdmin = user?.role === 'super-admin' || user?.role === 'hr-admin'
+// Every approved HR user (System Admin or HR Staff) may manage HR records.
+const canManage = Boolean(user)
 const yearUrl = (y: number) => {
   const u = new URL(Astro.url)
   u.searchParams.set('year', String(y))
@@ -59,7 +60,7 @@ const exportQuery = new URLSearchParams({ module: 'wellness-leaves', year: Strin
   description={`${allowance} wellness leave day${allowance === 1 ? '' : 's'} per employee in ${year}. Weekends and holidays are not counted.`}
 >
   <Fragment slot="actions">
-    {isAdmin && <a class="btn-secondary" href="/leave/settings"><Icon name="settings" /> Allowance & holidays</a>}
+    {canManage && <a class="btn-secondary" href="/leave/settings"><Icon name="settings" /> Allowance & holidays</a>}
     <a class="btn-secondary" href={`/data/export?${exportQuery}`}><Icon name="download" /> Export {year}</a>
     <a class="btn-primary" href={`/leave/new${employee ? `?employee=${employee}` : ''}`}><Icon name="plus" /> File leave</a>
   </Fragment>

@@ -6,7 +6,7 @@ const COOKIE = 'hr-flash'
 export type Flash = { type: 'success' | 'error' | 'info'; message: string }
 
 export function setFlash(cookies: AstroCookies, flash: Flash) {
-  cookies.set(COOKIE, JSON.stringify(flash), { path: '/', httpOnly: true, sameSite: 'lax', maxAge: 60 })
+  cookies.set(COOKIE, JSON.stringify(flash), { path: '/', httpOnly: true, sameSite: 'lax', maxAge: 60, secure: import.meta.env.PROD && (process.env.SERVER_URL ?? '').startsWith('https://') })
 }
 
 export function takeFlash(cookies: AstroCookies): Flash | null {

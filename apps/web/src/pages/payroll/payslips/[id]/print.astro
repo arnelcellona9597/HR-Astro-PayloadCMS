@@ -1,0 +1,15 @@
+---
+import Payslip from '../../../../components/payroll/Payslip.astro'
+import Print from '../../../../layouts/Print.astro'
+
+const { payload, user, settings: site } = Astro.locals
+const id = Number(Astro.params.id)
+const slip = await payload.findByID({ collection: 'payslips', id, depth: 1, user, overrideAccess: false, disableErrors: true })
+if (!slip) return new Response(null, { status: 404 })
+const period = typeof slip.period === 'object' ? slip.period : await payload.findByID({ collection: 'payroll-periods', id: slip.period, overrideAccess: true })
+const settings = await payload.findGlobal({ slug: 'payslip-settings', user, overrideAccess: false })
+const logo = site.logo && typeof site.logo === 'object' ? `/files/${site.logo.id}` : null
+---
+<Print title={`Payslip — ${slip.fullName} — ${period.name}`} paper={settings.paperSize} back={`/payroll/payslips/${id}`}>
+  <Payslip settings={settings} companyName={settings.companyName || site.companyName} logoUrl={logo} period={period} slip={slip} />
+</Print>

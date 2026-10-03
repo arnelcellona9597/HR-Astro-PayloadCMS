@@ -1,0 +1,248 @@
+---
+import { generatePayslips, itemLabels, releasePeriod, saveGrid, type GridRow } from '@hr/cms/server/payroll'
+import { CLASSIFICATIONS, formatCentavos, formatDate } from '@hr/shared'
+
+import EmptyState from '../../../components/EmptyState.astro'
+import Icon from '../../../components/Icon.astro'
+import App from '../../../layouts/App.astro'
+import { branchChoices } from '../../../lib/choices'
+import { errorMessage, UserError } from '../../../lib/errors'
+import { setFlash } from '../../../lib/flash'
+
+const { payload, user } = Astro.locals
+const id = Number(Astro.params.id)
+const period = await payload.findByID({ collection: 'payroll-periods', id, depth: 0, user, overrideAccess: false, disableErrors: true })
+if (!period) return new Response(null, { status: 404 })
+const settings = await payload.findGlobal({ slug: 'payslip-settings', user, overrideAccess: false })
+const labels = itemLabels(settings)
+const me = { id: user!.id, name: user!.name, email: user!.email }
+
+let gridErrors: string[] = []
+let posted: Record<string, string> = {}
+if (Astro.request.method === 'POST') {
+  const fd = await Astro.request.formData()
+  const action = String(fd.get('action'))
+  try {
+    if (action === 'generate') {
+      const r = await generatePayslips(payload, me, id, {
+        branch: fd.getAll('branch').map(Number).filter(Boolean),
+        classification: fd.getAll('classification').map(String).filter(Boolean),
+      })
+      setFlash(Astro.cookies, { type: 'success', message: `${r.created} payslip(s) created${r.existing ? `; ${r.existing} employee(s) already had one` : ''}.` })
+      return Astro.redirect(`/payroll/${id}`)
+    }
+    if (action === 'save') {
+      const rows: GridRow[] = fd.getAll('ids').map((raw) => {
+        const sid = Number(raw)
+        const values: Record<string, string> = {}
+        labels.earnings.forEach((l, i) => (values[`e:${l}`] = String(fd.get(`v_${sid}_e_${i}`) ?? '')))
+        labels.deductions.forEach((l, i) => (values[`d:${l}`] = String(fd.get(`v_${sid}_d_${i}`) ?? '')))
+        return { id: sid, values }
+      })
+      for (const [k, v] of fd.entries()) if (k.startsWith('v_') && typeof v === 'string') posted[k] = v
+      const res = await saveGrid(payload, me, id, rows)
+      if (res.ok) {
+        setFlash(Astro.cookies, { type: 'success', message: `Saved ${res.updated} payslip(s).` })
+        return Astro.redirect(`/payroll/${id}`)
+      }
+      gridErrors = res.errors.map((e) => e.message)
+      Astro.response.status = 400
+    }
+    if (action === 'release') {
+      const r = await releasePeriod(payload, me, id, { notify: fd.get('notify') === 'on' })
+      setFlash(Astro.cookies, {
+        type: 'success',
+        message: `${period.name} released (${r.payslips} payslips). ${r.queued ? `${r.queued} payslip email(s) are being sent.` : ''}${r.skipped ? ` ${r.skipped} employee(s) have no email address — print theirs.` : ''}`,
+      })
+      return Astro.redirect(`/payroll/${id}`)
+    }
+    if (action === 'delete-payslips') {
+      if (period.status === 'Released') throw new UserError('Released payroll cannot be cleared.')
+      await payload.delete({ collection: 'payslips', where: { period: { equals: id } }, user, overrideAccess: false })
+      setFlash(Astro.cookies, { type: 'success', message: 'All payslips in this period were deleted.' })
+      return Astro.redirect(`/payroll/${id}`)
+    }
+    if (action === 'delete-period') {
+      await payload.delete({ collection: 'payroll-periods', id, user, overrideAccess: false })
+      setFlash(Astro.cookies, { type: 'success', message: `${period.name} was deleted.` })
+      return Astro.redirect('/payroll')
+    }
+  } catch (err) {
+    setFlash(Astro.cookies, { type: 'error', message: errorMessage(err) })
+    return Astro.redirect(`/payroll/${id}`)
+  }
+}
+
+const [slips, branches] = await Promise.all([
+  payload.find({ collection: 'payslips', where: { period: { equals: id } }, sort: 'fullName', pagination: false, depth: 0, user, overrideAccess: false }),
+  branchChoices(payload),
+])
+const amount = (items: { label: string; amount: number }[] | null | undefined, label: string) => items?.find((i) => i.label === label)?.amount ?? 0
+const input = (sid: number, kind: 'e' | 'd', i: number, label: string, items: { label: string; amount: number }[] | null | undefined) =>
+  posted[`v_${sid}_${kind}_${i}`] ?? amount(items, label).toFixed(2)
+const sym = settings.currencySymbol || '₱'
+const peso = (n: number | null | undefined) => formatCentavos(Math.round((n ?? 0) * 100), sym)
+const totalNet = slips.docs.reduce((s, p) => s + Math.round((p.netPay ?? 0) * 100), 0)
+const totalGross = slips.docs.reduce((s, p) => s + Math.round((p.grossPay ?? 0) * 100), 0)
+const released = period.status === 'Released'
+const corrected = slips.docs.filter((s) => s.correctedAfterRelease).length
+---
+<App
+  title={period.name}
+  heading={period.name}
+  description={`${formatDate(period.periodStart)} – ${formatDate(period.periodEnd)} · Pay date ${formatDate(period.payDate)} · ${period.code}`}
+  back={{ href: '/payroll', label: 'Payroll' }}
+>
+  <Fragment slot="actions">
+    <span class={released ? 'badge-success' : 'badge-warning'}>{period.status}</span>
+    <a class="btn-secondary" href={`/payroll/${id}/edit`}><Icon name="edit" /> Edit period</a>
+    {slips.docs.length > 0 && <a class="btn-secondary" href={`/payroll/${id}/print`}><Icon name="printer" /> Print all</a>}
+    {slips.docs.length > 0 && <a class="btn-secondary" href={`/payroll/${id}/export`}><Icon name="download" /> Excel</a>}
+  </Fragment>
+
+  {released && (
+    <div class="mb-4 rounded-lg bg-success-soft px-4 py-3 text-sm text-success">
+      Released {period.releasedAt ? new Date(period.releasedAt).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) : ''}. Payslips you change now are marked “corrected” so you can re-send them.
+      {corrected > 0 && <strong> {corrected} payslip(s) were corrected after release.</strong>}
+    </div>
+  )}
+
+  <div class="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <div class="card p-4"><p class="text-xs text-muted">Payslips</p><p class="mt-1 text-2xl font-semibold tabular">{slips.docs.length}</p></div>
+    <div class="card p-4"><p class="text-xs text-muted">Total gross</p><p class="mt-1 text-2xl font-semibold tabular">{formatCentavos(totalGross, sym)}</p></div>
+    <div class="card p-4"><p class="text-xs text-muted">Total net</p><p class="mt-1 text-2xl font-semibold tabular">{formatCentavos(totalNet, sym)}</p></div>
+    <div class="card p-4"><p class="text-xs text-muted">Missing earnings</p><p class="mt-1 text-2xl font-semibold tabular">{slips.docs.filter((s) => !s.grossPay).length}</p></div>
+  </div>
+
+  <div class="mb-6 grid gap-4 lg:grid-cols-2">
+    <form method="post" class="card space-y-3 p-4">
+      <input type="hidden" name="action" value="generate" />
+      <h2 class="text-sm font-semibold">Generate payslips</h2>
+      <p class="text-xs text-muted">Creates an empty payslip for each active employee who doesn't have one in this period yet. Leave the filters empty for everyone.</p>
+      <div class="grid gap-3 sm:grid-cols-2">
+        <select class="input" name="branch" multiple size="3" aria-label="Branches">{branches.map((b) => <option value={b.value}>{b.label}</option>)}</select>
+        <div>{CLASSIFICATIONS.map((c) => <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="classification" value={c} class="size-4" /> {c}</label>)}</div>
+      </div>
+      <button class="btn-secondary btn-sm"><Icon name="plus" class="size-3.5" /> Generate</button>
+    </form>
+    <div class="card space-y-3 p-4">
+      <h2 class="text-sm font-semibold">Import amounts from Excel</h2>
+      <p class="text-xs text-muted">Download the Excel file, fill in the amounts, and upload it. Rows are matched by Employee ID; employees without a payslip get one. Everything is checked before saving.</p>
+      <form method="post" action={`/payroll/${id}/import`} enctype="multipart/form-data" class="flex flex-wrap gap-2">
+        <input type="hidden" name="action" value="upload" />
+        <input class="input max-w-xs" type="file" name="file" accept=".xlsx" required aria-label="Payroll Excel file" />
+        <button class="btn-secondary btn-sm"><Icon name="upload" class="size-3.5" /> Check file</button>
+      </form>
+      {!released && slips.docs.length > 0 && (
+        <form method="post" data-confirm={`Release ${period.name}? ${slips.docs.length} payslip(s) will be final and emailed to employees.`} class="flex flex-wrap items-center gap-3 border-t border-line pt-3">
+          <input type="hidden" name="action" value="release" />
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="notify" checked class="size-4" /> Email each employee their payslip (PDF)</label>
+          <button class="btn-primary btn-sm"><Icon name="send" class="size-3.5" /> Release payroll</button>
+        </form>
+      )}
+    </div>
+  </div>
+
+  {gridErrors.length > 0 && (
+    <div class="mb-4 rounded-lg bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">
+      <p class="font-medium">Nothing was saved. Fix these and save again:</p>
+      <ul class="mt-1 list-disc pl-5">{gridErrors.slice(0, 20).map((e) => <li>{e}</li>)}</ul>
+    </div>
+  )}
+
+  <div class="card overflow-hidden">
+    {slips.docs.length === 0 ? (
+      <EmptyState title="No payslips yet" text="Use “Generate payslips” above, or import an Excel file." />
+    ) : (
+      <form method="post" id="grid" data-dirty-guard>
+        <input type="hidden" name="action" value="save" />
+        <div class="max-h-[70vh] overflow-auto">
+          <table class="table text-xs [&_td]:align-middle">
+            <thead class="sticky top-0 z-10">
+              <tr>
+                <th class="sticky left-0 z-20 min-w-48">Employee</th>
+                {labels.earnings.map((l) => <th class="min-w-28 text-right !normal-case">{l}</th>)}
+                <th class="min-w-28 text-right">Gross</th>
+                {labels.deductions.map((l) => <th class="min-w-28 text-right !normal-case">{l}</th>)}
+                <th class="min-w-28 text-right">Deductions</th>
+                <th class="min-w-28 text-right">Net pay</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {slips.docs.map((s) => (
+                <tr data-row>
+                  <td class="sticky left-0 z-[1] bg-surface">
+                    <input type="hidden" name="ids" value={s.id} />
+                    <a class="font-medium hover:text-primary-ink" href={`/payroll/payslips/${s.id}`}>{s.fullName}</a>
+                    <span class="block font-mono text-[11px] text-muted">{s.employeeCode}</span>
+                    {s.correctedAfterRelease && <span class="badge-danger">corrected</span>}
+                  </td>
+                  {labels.earnings.map((l, i) => (
+                    <td class="!px-1"><input class="input py-1 text-right tabular" inputmode="decimal" name={`v_${s.id}_e_${i}`} value={input(s.id, 'e', i, l, s.earnings)} data-kind="e" aria-label={`${l} for ${s.fullName}`} /></td>
+                  ))}
+                  <td class="text-right font-medium tabular" data-gross>{peso(s.grossPay)}</td>
+                  {labels.deductions.map((l, i) => (
+                    <td class="!px-1"><input class="input py-1 text-right tabular" inputmode="decimal" name={`v_${s.id}_d_${i}`} value={input(s.id, 'd', i, l, s.deductions)} data-kind="d" aria-label={`${l} for ${s.fullName}`} /></td>
+                  ))}
+                  <td class="text-right tabular" data-ded>{peso(s.totalDeductions)}</td>
+                  <td class="text-right font-semibold tabular" data-net>{peso(s.netPay)}</td>
+                  <td class="whitespace-nowrap">
+                    <a class="btn-ghost btn-sm" href={`/payroll/payslips/${s.id}/print`} title="Print"><Icon name="printer" class="size-3.5" label="Print payslip" /></a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-line p-4">
+          <p class="text-xs text-muted">Amounts in pesos, up to 2 decimals. Totals are added up automatically; every row is saved together or not at all.</p>
+          <button class="btn-primary">Save all payslips</button>
+        </div>
+      </form>
+    )}
+  </div>
+
+  {!released && (
+    <div class="mt-6 flex flex-wrap gap-2">
+      {slips.docs.length > 0 ? (
+        <form method="post" data-confirm="Delete ALL payslips in this period? This cannot be undone.">
+          <input type="hidden" name="action" value="delete-payslips" />
+          <button class="btn-danger btn-sm"><Icon name="trash" class="size-3.5" /> Delete all payslips</button>
+        </form>
+      ) : (
+        <form method="post" data-confirm={`Delete ${period.name}?`}>
+          <input type="hidden" name="action" value="delete-period" />
+          <button class="btn-danger btn-sm"><Icon name="trash" class="size-3.5" /> Delete period</button>
+        </form>
+      )}
+    </div>
+  )}
+</App>
+
+<script define:vars={{ sym: settings.currencySymbol || '₱' }}>
+  const fmt = new Intl.NumberFormat('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const cents = (v) => {
+    const n = Number(String(v).replace(/,/g, '').trim() || 0)
+    return Number.isFinite(n) ? Math.round(n * 100) : NaN
+  }
+  const show = (c) => (Number.isNaN(c) ? '—' : `${c < 0 ? '−' : ''}${sym}${fmt.format(Math.abs(c) / 100)}`)
+  document.querySelectorAll('tr[data-row]').forEach((row) => {
+    const update = () => {
+      let e = 0
+      let d = 0
+      row.querySelectorAll('input[data-kind]').forEach((inp) => {
+        const c = cents(inp.value)
+        inp.setAttribute('aria-invalid', Number.isNaN(c) || c < 0 ? 'true' : 'false')
+        if (inp.dataset.kind === 'e') e += c
+        else d += c
+      })
+      row.querySelector('[data-gross]').textContent = show(e)
+      row.querySelector('[data-ded]').textContent = show(d)
+      const net = row.querySelector('[data-net]')
+      net.textContent = show(e - d)
+      net.classList.toggle('text-danger', e - d < 0)
+    }
+    row.addEventListener('input', update)
+  })
+</script>

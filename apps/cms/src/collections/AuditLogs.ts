@@ -1,6 +1,8 @@
 import type { CollectionConfig } from 'payload'
 
-import { isHrAdmin, nobody } from '../access'
+import type { Where } from 'payload'
+
+import { hasRole, isApproved, nobody } from '../access'
 
 export const AuditLogs: CollectionConfig = {
   slug: 'audit-logs',
@@ -11,7 +13,17 @@ export const AuditLogs: CollectionConfig = {
     defaultColumns: ['createdAt', 'userName', 'action', 'collectionSlug', 'docLabel'],
   },
   // Written only by hooks (overrideAccess); nobody can edit or delete history.
-  access: { read: isHrAdmin, create: nobody, update: nobody, delete: nobody },
+  // HR Staff see the history of HR records; changes to HR accounts are visible to System Admins only.
+  access: {
+    read: ({ req }) => {
+      if (hasRole(req.user, 'system-admin')) return true
+      if (!isApproved(req.user)) return false
+      return { collectionSlug: { not_in: ['users', 'smtp-settings'] } } as Where
+    },
+    create: nobody,
+    update: nobody,
+    delete: nobody,
+  },
   fields: [
     { name: 'user', type: 'relationship', relationTo: 'users', index: true },
     { name: 'userName', type: 'text' },

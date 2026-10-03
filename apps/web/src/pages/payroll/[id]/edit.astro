@@ -1,0 +1,25 @@
+---
+import ModuleForm from '../../../components/ModuleForm.astro'
+import App from '../../../layouts/App.astro'
+import { docToValues, handleSave } from '../../../lib/crud'
+import { PERIOD_FIELDS } from '../../../lib/payroll'
+
+const { payload, user } = Astro.locals
+const id = Number(Astro.params.id)
+const period = await payload.findByID({ collection: 'payroll-periods', id, depth: 0, user, overrideAccess: false, disableErrors: true })
+if (!period) return new Response(null, { status: 404 })
+const state = await handleSave(Astro, {
+  collection: 'payroll-periods',
+  fields: PERIOD_FIELDS,
+  id,
+  initial: docToValues(period as never, PERIOD_FIELDS),
+  successMessage: (d) => `${d.name} updated.`,
+  redirectTo: (d) => `/payroll/${d.id}`,
+})
+if (state.redirect) return state.redirect
+---
+<App title={`Edit ${period.name}`} heading={`Edit ${period.name}`} back={{ href: `/payroll/${id}`, label: period.name }}>
+  <div class="max-w-4xl">
+    <ModuleForm fields={PERIOD_FIELDS} values={state.values} errors={state.errors} formError={state.formError} cancelHref={`/payroll/${id}`} submitLabel="Save changes" />
+  </div>
+</App>

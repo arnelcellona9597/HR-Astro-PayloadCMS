@@ -7,5 +7,14 @@ allowBuilds:
   unrs-resolver: true
   sharp: false
 
+minimumReleaseAgeExclude:
+  - nodemailer@10.0.14
+
 # Flat node_modules: Passenger on shared hosting and Next.js file tracing work best without symlinks.
 nodeLinker: hoisted
+
+# Security: force patched versions of vulnerable transitive dependencies (pnpm audit, 2026-10-04).
+overrides:
+  undici: ^7.30.0
+  uuid: ^11.1.1
+  dompurify: ^3.4.16

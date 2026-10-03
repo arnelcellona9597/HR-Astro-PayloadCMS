@@ -1,0 +1,153 @@
+---
+import { emailConfigured, sendNow } from '@hr/cms/server/mailer'
+import crypto from 'node:crypto'
+
+import Icon from '../../components/Icon.astro'
+import App from '../../layouts/App.astro'
+import { errorMessage, UserError } from '../../lib/errors'
+import { setFlash } from '../../lib/flash'
+
+const { payload, user } = Astro.locals
+let error = ''
+if (Astro.request.method === 'POST') {
+  const fd = await Astro.request.formData()
+  try {
+    if (fd.get('action') === 'test') {
+      // HR Staff can only test-send to their own address; System Admins use the Email server page.
+      const to = user!.email
+      await sendNow(payload, to, 'Test email from the HR system', `Hi,\n\nThis is a test email sent by ${user!.name}. If you can read this, email sending works.`)
+      setFlash(Astro.cookies, { type: 'success', message: `Test email sent to ${to}.` })
+    } else if (fd.get('action') === 'rotate') {
+      if (user?.role !== 'system-admin') throw new UserError('Only System Admins can change the cron key.')
+      await payload.updateGlobal({ slug: 'notification-settings', data: { queueKey: crypto.randomBytes(18).toString('hex') }, overrideAccess: true, context: { skipAudit: true } })
+      setFlash(Astro.cookies, { type: 'success', message: 'New cron key created. Update the cron job with the new command.' })
+    } else {
+      const hourlyLimit = Number(fd.get('hourlyLimit'))
+      await payload.updateGlobal({
+        slug: 'notification-settings',
+        data: {
+          leaveFiledToEmployee: fd.get('leaveFiledToEmployee') === 'on',
+          leaveStatusToEmployee: fd.get('leaveStatusToEmployee') === 'on',
+          payrollReleasedToEmployee: fd.get('payrollReleasedToEmployee') === 'on',
+          registrationToAdmins: fd.get('registrationToAdmins') === 'on',
+          hourlyLimit,
+          replyTo: String(fd.get('replyTo') ?? '').trim() || null,
+          footer: String(fd.get('footer') ?? ''),
+        },
+        user,
+        overrideAccess: false,
+      })
+      setFlash(Astro.cookies, { type: 'success', message: 'Email settings saved.' })
+    }
+    return Astro.redirect('/settings/notifications')
+  } catch (err) {
+    error = errorMessage(err)
+    Astro.response.status = 400
+  }
+}
+
+const [s, templates, queued] = await Promise.all([
+  payload.findGlobal({ slug: 'notification-settings', user, overrideAccess: false }),
+  payload.find({ collection: 'email-templates', sort: 'name', pagination: false, depth: 0, user, overrideAccess: false }),
+  payload.count({ collection: 'message-recipients', where: { status: { in: ['queued', 'sending'] } }, overrideAccess: true }),
+])
+const configured = await emailConfigured(payload)
+const isAdmin = user?.role === 'system-admin'
+const queueKey = isAdmin ? (await payload.findGlobal({ slug: 'notification-settings', user, overrideAccess: false })).queueKey : null
+const serverUrl = process.env.SERVER_URL?.replace(/\/$/, '')
+const toggles = [
+  ['leaveFiledToEmployee', 'Email the employee when wellness leave is filed'],
+  ['leaveStatusToEmployee', 'Email the employee when a leave status changes'],
+  ['payrollReleasedToEmployee', 'Email each employee their payslip (PDF) when payroll is released'],
+  ['registrationToAdmins', 'Email System Admins when someone requests an HR account'],
+] as const
+const fmt = (d?: string | null) => (d ? new Date(d).toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) : 'never')
+---
+<App title="Email Settings" heading="Email & notifications" description="Automatic emails, sending limits, templates and the mail server status.">
+  {error && <div class="mb-4 rounded-lg bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{error}</div>}
+  <div class="grid gap-6 xl:grid-cols-3">
+    <form method="post" class="card space-y-5 p-5 xl:col-span-2">
+      <fieldset class="space-y-2">
+        <legend class="mb-2 font-semibold">Automatic emails</legend>
+        {toggles.map(([name, label]) => (
+          <label class="flex items-center gap-2 text-sm"><input type="checkbox" name={name} checked={s[name] !== false} class="size-4" /> {label}</label>
+        ))}
+        <p class="field-help">Emails go to the address on the employee's record; employees without one are skipped and listed in Messages.</p>
+      </fieldset>
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label class="label" for="hourlyLimit">Maximum emails per hour</label>
+          <input class="input" id="hourlyLimit" name="hourlyLimit" type="number" min="1" max="5000" required value={s.hourlyLimit ?? 100} />
+          <p class="field-help">Ask your host for the limit (often 100–500/hour). Extra emails wait in the queue.</p>
+        </div>
+        <div>
+          <label class="label" for="replyTo">Reply-to address</label>
+          <input class="input" id="replyTo" name="replyTo" type="email" value={s.replyTo ?? ''} placeholder="hr@yourdomain.com" />
+        </div>
+      </div>
+      <div>
+        <label class="label" for="footer">Email footer</label>
+        <textarea class="input min-h-20" id="footer" name="footer">{s.footer}</textarea>
+      </div>
+      <button class="btn-primary">Save settings</button>
+    </form>
+
+    <aside class="space-y-4">
+      <section class="card space-y-3 p-5 text-sm">
+        <h2 class="font-semibold">Mail server</h2>
+        {configured ? (
+          <p class:list={['rounded-lg px-3 py-2', s.smtpLastError ? 'bg-danger-soft text-danger' : 'bg-success-soft text-success']}>
+            {s.smtpLastError
+              ? isAdmin ? `Last error (${fmt(s.smtpLastErrorAt)}): ${s.smtpLastError}` : 'There is a problem sending email. Your System Admin has been notified on screen.'
+              : `Working. Last successful send: ${fmt(s.smtpLastOkAt)}.`}
+          </p>
+        ) : (
+          <p class="rounded-lg bg-warning-soft px-3 py-2 text-warning">The email server is not set up yet{isAdmin ? '' : ' — ask your System Admin'}. Sign-in codes go to the server log and no emails are sent.</p>
+        )}
+        {isAdmin && <a class="btn-secondary btn-sm" href="/settings/email-server">Email server (SMTP) settings</a>}
+        <p class="text-fg-2">Emails waiting in the queue: <strong class="tabular">{queued.totalDocs}</strong></p>
+        <form method="post">
+          <input type="hidden" name="action" value="test" />
+          <button class="btn-secondary btn-sm">Send a test email to me ({user?.email})</button>
+        </form>
+      </section>
+      {isAdmin && (
+        <section class="card space-y-2 p-5 text-sm">
+          <h2 class="font-semibold">Cron job</h2>
+          <p class="text-fg-2">Add this to cPanel → Cron Jobs (every 5 minutes) so queued emails go out even when nobody is using the app. Keep the key secret.</p>
+          {serverUrl ? (
+            <code class="block break-all rounded-lg bg-surface-2 p-2 font-mono text-xs">curl -s -H "X-Queue-Key: {queueKey}" "{serverUrl}/internal/queue" &gt; /dev/null</code>
+          ) : (
+            <p class="text-warning">Set SERVER_URL in .env to see the command.</p>
+          )}
+          <form method="post" data-confirm="Create a new key? The old cron command will stop working.">
+            <input type="hidden" name="action" value="rotate" />
+            <button class="btn-ghost btn-sm">Rotate key</button>
+          </form>
+        </section>
+      )}
+    </aside>
+  </div>
+
+  <section class="card mt-6 overflow-hidden">
+    <header class="flex items-center justify-between p-4">
+      <h2 class="text-sm font-semibold">Email templates</h2>
+      <a class="btn-primary btn-sm" href="/settings/templates/new"><Icon name="plus" class="size-3.5" /> New template</a>
+    </header>
+    <div class="overflow-x-auto">
+      <table class="table">
+        <thead><tr><th>Name</th><th>Category</th><th>Used for</th><th>Subject</th></tr></thead>
+        <tbody>
+          {templates.docs.map((t) => (
+            <tr>
+              <td class="font-medium"><a class="hover:text-primary-ink" href={`/settings/templates/${t.id}`}>{t.name}</a></td>
+              <td><span class="badge-neutral">{t.category}</span></td>
+              <td class="text-fg-2">{t.key ? 'Automatic emails' : 'Manual messages'}</td>
+              <td class="max-w-md truncate text-fg-2">{t.subject}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</App>

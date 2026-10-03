@@ -1,0 +1,16 @@
+---
+import type { CertificateContent } from '@hr/cms/server/certificates'
+import { MARGIN_POINTS } from '@hr/shared/certificates'
+
+import CertificateSheet from '../../../components/certificates/CertificateSheet.astro'
+import Print from '../../../layouts/Print.astro'
+
+const { payload, user } = Astro.locals
+const id = Number(Astro.params.id)
+const cert = Number.isInteger(id) && id > 0 ? await payload.findByID({ collection: 'certificates', id, depth: 0, user, overrideAccess: false, disableErrors: true }) : null
+if (!cert) return new Response(null, { status: 404 })
+const content = cert.content as CertificateContent
+---
+<Print title={`${cert.controlNumber} — ${cert.employeeName}`} paper={content.paperSize} back={`/certificates/${id}`} margin={`${MARGIN_POINTS[content.margin] ?? 72}pt`}>
+  <CertificateSheet {...content} void={cert.status === 'Void'} print />
+</Print>

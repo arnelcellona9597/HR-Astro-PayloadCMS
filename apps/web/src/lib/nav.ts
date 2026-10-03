@@ -21,6 +21,7 @@ export function navGroups(role: string | undefined): NavGroup[] {
         { href: '/leave', label: 'Wellness Leave', icon: 'calendar' },
         { href: '/branches', label: 'Branches', icon: 'building' },
         { href: '/requirements', label: 'Annual Requirements', icon: 'file' },
+        { href: '/certificates', label: 'Certificates', icon: 'award' },
         { href: '/payroll', label: 'Payroll', icon: 'wallet' },
         { href: '/messages', label: 'Messages', icon: 'mail' },
         { href: '/data', label: 'Import / Export', icon: 'sheet' },

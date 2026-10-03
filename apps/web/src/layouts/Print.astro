@@ -5,9 +5,11 @@ interface Props {
   title: string
   paper?: string | null
   back: string
+  /** Page margin for printing (CSS length); content that sets its own margins passes '0'. */
+  margin?: string
 }
-const { title, paper = 'A4', back } = Astro.props
-const size = paper === 'Letter' ? 'letter' : paper === 'Half-Letter' ? '5.5in 8.5in' : 'A4'
+const { title, paper = 'A4', back, margin = '12mm' } = Astro.props
+const size = paper === 'Letter' ? 'letter' : paper === 'Legal' ? 'legal' : paper === 'Half-Letter' ? '5.5in 8.5in' : 'A4'
 ---
 <!doctype html>
 <html lang="en" data-theme="light">
@@ -16,7 +18,7 @@ const size = paper === 'Letter' ? 'letter' : paper === 'Half-Letter' ? '5.5in 8.
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex, nofollow" />
     <title>{title}</title>
-    <style set:html={`@page { size: ${size}; margin: 12mm; } @media print { .no-print { display: none !important } body { background: #fff !important } .sheet { box-shadow: none !important; border: 0 !important; margin: 0 !important; break-after: page; } .sheet:last-child { break-after: auto } }`} />
+    <style set:html={`@page { size: ${size}; margin: ${margin}; } @media print { .no-print { display: none !important } body { background: #fff !important } .sheet { box-shadow: none !important; border: 0 !important; margin: 0 !important; break-after: page; } .sheet:last-child { break-after: auto } }`} />
   </head>
   <body class="bg-surface-2 text-fg">
     <div class="no-print sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-line bg-surface px-4 py-3">

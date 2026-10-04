@@ -259,7 +259,7 @@
  * State lives in data attributes on #shell, rendered server-side from cookies (no layout flash).
  * --------------------------------------------------------------------------------------------- */
 #shell[data-header='compact'] {
-  --topbar-h: 3rem;
+  --topbar-h: 2.75rem;
 }
 
 #sidebar {
@@ -407,8 +407,70 @@
   height: var(--topbar-h);
   transition: height 160ms ease;
 }
-#shell[data-header='compact'] .crumb-trail {
+#topbar .btn-icon,
+#topbar .tb-avatar,
+#topbar .tb-inner {
+  transition-property: width, height, padding, gap, color, background-color, border-color;
+  transition-duration: 150ms;
+}
+.tb-compact-toggle[aria-pressed='true'] {
+  background: var(--primary-soft);
+  color: var(--primary-ink);
+}
+
+/* Compact header: a deliberately minimal bar, not a scaled-down full one.
+   Kept: menu/sidebar toggle, page title, notifications, restore toggle, avatar (account menu).
+   Hidden: breadcrumb trail, search, theme toggle (also in the account menu), dividers, name/role. */
+#shell[data-header='compact'] #topbar :is(.crumb-trail, .tb-search, .tb-theme, .tb-divider, .tb-user-text) {
   display: none;
+}
+#shell[data-header='compact'] #topbar .tb-inner {
+  gap: 0.25rem;
+  padding-inline: 0.75rem;
+}
+#shell[data-header='compact'] #topbar .tb-title {
+  font-size: 0.8125rem;
+}
+#shell[data-header='compact'] #topbar .btn-icon {
+  width: 1.75rem;
+  height: 1.75rem;
+  margin-inline: 0;
+  border-radius: 0.375rem;
+}
+#shell[data-header='compact'] #topbar .btn-icon > svg {
+  width: 1rem;
+  height: 1rem;
+}
+#shell[data-header='compact'] #topbar .tb-badge {
+  top: -0.125rem;
+  right: -0.125rem;
+  min-width: 0.875rem;
+  padding-inline: 0.1875rem;
+  font-size: 9px;
+  line-height: 0.875rem;
+}
+#shell[data-header='compact'] #topbar .tb-user {
+  padding: 0;
+  margin-left: 0.25rem;
+  border-radius: 9999px;
+}
+#shell[data-header='compact'] #topbar .tb-avatar {
+  width: 1.75rem;
+  height: 1.75rem;
+  font-size: 0.625rem;
+}
+#shell[data-header='compact'] .sidebar-brand .sidebar-label > :last-child {
+  display: none;
+}
+#shell[data-header='compact'] .sidebar-brand > a > :first-child {
+  width: 1.75rem;
+  height: 1.75rem;
+  font-size: 0.6875rem;
+}
+@media (min-width: 64rem) {
+  #shell[data-header='compact'] #topbar .tb-inner {
+    padding-inline: 1.25rem;
+  }
 }
 
 /* Floating menus (user menu): fade + slight scale, closed state keeps [hidden]. */

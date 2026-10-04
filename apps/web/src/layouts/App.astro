@@ -167,7 +167,9 @@ crumbs.push({ label: path === '/' ? 'Dashboard' : section?.href === path ? secti
         const label = el.querySelector('[data-toggle-label]')
         if (label) label.textContent = s.collapsed ? 'Expand sidebar' : 'Collapse sidebar'
       })
-      document.querySelector('[data-header-toggle]')?.setAttribute('aria-pressed', String(s.compact))
+      const headerToggle = document.querySelector('[data-header-toggle]')
+      headerToggle?.setAttribute('aria-pressed', String(s.compact))
+      headerToggle?.setAttribute('title', s.compact ? 'Expand header' : 'Compact header')
     }
     const setPref = (pref: string, on: boolean) => {
       if (pref === 'collapsed') (shell.dataset.sidebar = on ? 'collapsed' : 'expanded'), setCookie('hr-sidebar', shell.dataset.sidebar)

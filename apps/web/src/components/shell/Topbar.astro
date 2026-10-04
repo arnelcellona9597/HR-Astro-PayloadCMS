@@ -1,6 +1,7 @@
 ---
 // Sticky top bar: sidebar toggle, breadcrumbs, employee search, theme, notifications, account menu.
-// Compact mode (preference) lowers the bar and keeps only the current page in the breadcrumb.
+// Compact mode (preference, #shell[data-header=compact]) is a minimal bar: sidebar toggle, page title,
+// notifications, the restore toggle and the avatar. The `tb-*` hooks are styled in global.css.
 import Icon from '../Icon.astro'
 import UserMenu from './UserMenu.astro'
 
@@ -14,7 +15,7 @@ const { crumbs, unread, user, prefs } = Astro.props
 const q = Astro.url.pathname === '/employees' ? (Astro.url.searchParams.get('q') ?? '') : ''
 ---
 <header id="topbar" class="sticky top-0 z-30 border-b border-line bg-surface/85 backdrop-blur-md supports-[backdrop-filter]:bg-surface/75">
-  <div class="flex h-full items-center gap-1.5 px-3 sm:gap-2 sm:px-6 lg:px-8">
+  <div class="tb-inner flex h-full items-center gap-1.5 px-3 sm:gap-2 sm:px-6 lg:px-8">
     <button type="button" class="btn-icon -ml-1 shrink-0 lg:hidden" data-sidebar-open aria-controls="sidebar" aria-expanded="false" aria-label="Open menu">
       <Icon name="menu" class="size-5" />
     </button>
@@ -22,7 +23,7 @@ const q = Astro.url.pathname === '/employees' ? (Astro.url.searchParams.get('q')
       <Icon name={prefs.right ? 'panelRight' : 'panelLeft'} class="size-[18px]" />
       <span class="sr-only" data-toggle-label>{prefs.collapsed ? 'Expand sidebar' : 'Collapse sidebar'}</span>
     </button>
-    <span class="mx-1 hidden h-5 w-px bg-line lg:block" aria-hidden="true"></span>
+    <span class="tb-divider mx-1 hidden h-5 w-px bg-line lg:block" aria-hidden="true"></span>
 
     <nav aria-label="Breadcrumb" class="min-w-0 flex-1">
       <ol class="flex min-w-0 items-center gap-1 text-sm">
@@ -30,7 +31,7 @@ const q = Astro.url.pathname === '/employees' ? (Astro.url.searchParams.get('q')
           crumbs.map((c, i) => {
             const last = i === crumbs.length - 1
             return last ? (
-              <li class="min-w-0 truncate font-semibold text-fg" aria-current="page">{c.label}</li>
+              <li class="tb-title min-w-0 truncate font-semibold text-fg" aria-current="page">{c.label}</li>
             ) : (
               <li class="crumb-trail hidden shrink-0 items-center gap-1 sm:flex">
                 <a href={c.href} class="rounded px-1 text-muted transition-colors hover:text-fg">
@@ -51,7 +52,7 @@ const q = Astro.url.pathname === '/employees' ? (Astro.url.searchParams.get('q')
       </ol>
     </nav>
 
-    <form method="get" action="/employees" role="search" class="relative hidden md:block" data-topbar-search>
+    <form method="get" action="/employees" role="search" class="tb-search relative hidden md:block" data-topbar-search>
       <label for="topbar-q" class="sr-only">Search employees</label>
       <Icon name="search" class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
       <input
@@ -65,18 +66,19 @@ const q = Astro.url.pathname === '/employees' ? (Astro.url.searchParams.get('q')
       />
       <span class="kbd pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2" aria-hidden="true">/</span>
     </form>
-    <a href="/employees#search" class="btn-icon md:hidden" aria-label="Search employees">
+    <a href="/employees#search" class="tb-search btn-icon md:hidden" aria-label="Search employees">
       <Icon name="search" class="size-[18px]" />
     </a>
 
-    <button type="button" class="btn-icon" data-theme-toggle title="Toggle dark mode">
+    <!-- Not shown in compact mode: Dark mode is also in the account menu. -->
+    <button type="button" class="tb-theme btn-icon" data-theme-toggle title="Toggle dark mode">
       <Icon name="moon" class="size-[18px] dark:hidden" />
       <Icon name="sun" class="hidden size-[18px] dark:block" />
       <span class="sr-only dark:hidden">Switch to dark mode</span>
       <span class="sr-only hidden dark:inline">Switch to light mode</span>
     </button>
 
-    <button type="button" class="btn-icon hidden md:inline-flex" data-header-toggle aria-pressed={prefs.compact ? 'true' : 'false'} title="Compact header">
+    <button type="button" class="tb-compact-toggle btn-icon hidden md:inline-flex" data-header-toggle aria-pressed={prefs.compact ? 'true' : 'false'} title={prefs.compact ? 'Expand header' : 'Compact header'}>
       <Icon name="panelTop" class="size-[18px]" />
       <span class="sr-only">Compact header</span>
     </button>
@@ -85,14 +87,14 @@ const q = Astro.url.pathname === '/employees' ? (Astro.url.searchParams.get('q')
       <Icon name="bell" class="size-[18px]" />
       {
         unread > 0 && (
-          <span class="absolute right-1 top-1 flex min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold leading-4 text-white ring-2 ring-surface tabular">
+          <span class="tb-badge absolute right-1 top-1 flex min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold leading-4 text-white ring-2 ring-surface tabular">
             {unread > 99 ? '99+' : unread}
           </span>
         )
       }
     </a>
 
-    <span class="mx-1 hidden h-5 w-px bg-line sm:block" aria-hidden="true"></span>
+    <span class="tb-divider mx-1 hidden h-5 w-px bg-line sm:block" aria-hidden="true"></span>
     <UserMenu name={user.name} email={user.email} role={user.role} avatarId={user.avatarId} prefs={prefs} />
   </div>
 </header>
